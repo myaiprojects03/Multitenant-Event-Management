@@ -1,0 +1,31 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# fastembed model cache
+.cache/
+local_cache/
+
+# node
+node_modules/
+.next/
+out/
+
+# eval outputs
+backend/evals/reports/*.tmp
+
+# os / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

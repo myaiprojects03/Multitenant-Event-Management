@@ -1,0 +1,81 @@
+﻿Domain: Multi-Tenant Event Management Platform (Conferences, Trade Shows, Corporate, Healthcare, University)
+Target Stack: Python (FastAPI), PostgreSQL + pgvector, Redis, n8n / Async Workers, OpenAI / Claude APIs
+1. Project Objective & Scope
+Transform a multi-event management platform (branded mobile apps, schedules, speakers, exhibitors, sponsors, attendee networking, lead capture, and analytics) from static workflows into a multi-tenant AI-powered event ecosystem.
+Rather than building isolated chat wrappers, the team will deliver a modular AI service layer that enforces tenant and event isolation, role-based access control (RBAC), deterministic guardrails, and observable, cost-optimized execution.
+Core Deliverables
+Multi-Tenant RAG & Permission-Aware Event Assistant (Schedules, speakers, sessions, exhibitors, sponsors, attendees)
+Attendee Matchmaking & Personalized Recommendation Engine (Attendees, speakers, exhibitors, sessions)
+Natural-Language-to-SQL & Event BI Copilot (Engagement, session attendance, networking, lead capture)
+Agentic Workflow Automation & HITL Gateways (Lead qualification, exhibitor follow-ups, webhook/API actions)
+Evaluation, Observability, & Cost/Latency Telemetry Suite (Latency/token tracking, query tracing, test harness)
+2. System Architecture & Multi-Tenant Security Rules
+2.1 Tenant, Event, & Role Isolation (Mandatory)
+Every query, retrieval step, SQL generation, and agent tool call must enforce strict scoping:
+Tenant & Event Boundary: All vector embeddings, analytics views, and workflow states must carry tenant_id and event_id metadata/filters. Cross-tenant or cross-event leakage is prohibited.
+Role-Based Access Control (RBAC):
+Attendee: Access only to public event schedules, session/speaker info, opt-in networking profiles, and their own saved items/leads.
+Exhibitor: Access to event/booth data, own lead capture metrics, and permitted attendee matches—never competitor private lead lists.
+Organizer / Admin: Access to full event telemetry, attendee engagement metrics, and workflow approvals within their tenant_id.
+2.2 Reliability, Latency, & Cost Controls
+Semantic & Query Caching: Cache repeated event FAQ/schedule queries in Redis with event-scoped TTLs to cut latency and token spend.
+Model Routing & Structured Outputs: Use fast/low-cost models for classification, routing, and formatting; reserve frontier models for complex synthesis or SQL generation. Enforce Pydantic schemas on structured outputs.
+Observability & Audit Logging: Log request_id, tenant_id, event_id, user_role, route_type, latency_ms, token_usage, and status without exposing sensitive user credentials or unauthorized records.
+3. Functional Requirements & Team Responsibilities
+Module 1: Multi-Tenant RAG & Event Assistant (AI & Backend Team)
+Ingestion & Indexing:
+Index event entities and documents (sessions, tracks, speakers, exhibitors, sponsors, FAQs, PDFs) with tenant_id, event_id, entity_type, and visibility_scope tags.
+Support incremental updates via platform webhooks when schedules, rooms, or exhibitor details change.
+Retrieval & Answering:
+Combine vector similarity search (pgvector) with metadata/keyword filtering for exact lookups (room numbers, session times, booth IDs).
+Return grounded answers with source citations and explicit fallbacks when information is missing or restricted by role.
+Permission-Aware Task Tools:
+Allow authenticated users to execute bounded read/write actions (e.g., bookmarking a session, filtering exhibitors by category) strictly within their RBAC scope.
+Module 2: Attendee Matchmaking & Recommendation Engine (Data & AI Team)
+Profile & Intent Representation:
+Build rich embeddings and structured feature vectors from attendee roles, industries, stated goals, session interests, and exhibitor tags (respecting networking opt-in flags).
+Multi-Target Recommendations:
+Peer Matchmaking: Rank compatible attendees with concise "why we matched" rationales based on shared topics, complementary roles, or networking goals.
+Content & Exhibitor Discovery: Recommend sessions, tracks, speakers, and exhibitors aligned with attendee profiles and past interactions.
+Feedback Loop: Track clicks, connection requests, and session saves to refine ranking weights and avoid repetitive suggestions.
+Module 3: Natural-Language-to-SQL & Event BI Copilot (Data & Backend Team)
+Safe Analytical Querying:
+Translate organizer natural-language questions (e.g., "Which sessions had the highest drop-off after 20 minutes?" or "Which exhibitors generated the most qualified leads yesterday?") into read-only SQL against approved reporting views/tables.
+SQL & Data Guardrails:
+Enforce SELECT-only queries, mandatory tenant_id and event_id predicates, row limits, query timeouts, and column allowlists.
+Return both a clear executive summary/key trends and the underlying structured metrics table.
+Predictive & Trend Summaries:
+Surface anomaly flags and engagement trends (e.g., session capacity risk, networking drop-offs, lead velocity) to help organizers act during live events.
+Module 4: Agentic Workflows & HITL Automation (Automation & Backend Team)
+Event-Driven Agents:
+Lead Qualification Agent: Scores captured leads using event/exhibitor criteria and drafts tailored follow-up notes or next steps.
+Exhibitor & Organizer Operations Agent: Automates repetitive post-session summaries, exhibitor outreach drafts, and schedule/task routing via platform APIs and webhooks.
+Human-in-the-Loop (HITL) & Error Handling:
+Require explicit human approval before sending external messages, modifying live event schedules, or triggering bulk actions.
+Implement retries with exponential backoff, idempotency keys, and dead-letter/error logs for failed API or webhook calls.
+Module 5: Evaluation Harness, API Layer, & Demo UI (Full-Stack / QA Team)
+FastAPI Service Layer: Expose clean endpoints (/assistant/query, /recommendations, /analytics/nl-sql, /workflows/trigger, /workflows/{id}/decision) with auth and RBAC middleware.
+Evaluation & Benchmark Suite: Create a test set covering RAG accuracy/grounding, RBAC isolation, SQL safety/correctness, and matchmaking relevance, plus latency and cost benchmarks.
+Minimalist Demo Console: Provide a clean interface switching between Attendee, Exhibitor, and Organizer roles to demonstrate assistant queries, match cards, NL-to-SQL charts/tables, and HITL approval queues.
+4. Technical Stack
+LayerTechnologyRoleBackend APIPython 3.11 + FastAPI + PydanticAI orchestration endpoints, RBAC enforcement, SQL guardrails, HITL APIsDatabase & Vector StorePostgreSQL + pgvectorTransactional/reporting data, embeddings with tenant/event filters, audit logsCache & QueueRedisSemantic/query caching, rate limiting, async job/event stateWorkflow Orchestratorn8n / Async WorkersWebhook ingestion, multi-step agent pipelines, retries, notificationsLLM & EmbeddingsOpenAI / Claude APIsReasoning, structured extraction, RAG synthesis, SQL generation, embeddingsDemo FrontendNext.js / ReactRole-switched showcase UI for Assistant, Matchmaking, BI Copilot, and HITL
+5. Fast-Track Execution Plan (7–10 Days)
+Workstreams run in parallel to deliver a working, testable ecosystem in 7–10 days:
+Days 1–2 | Schema, RBAC Contracts, & Seed Data:
+Set up PostgreSQL (pgvector), Redis, FastAPI skeleton, and multi-tenant seed data (1–2 sample events across conferences/trade shows with attendees, sessions, exhibitors, leads, and engagement logs).
+Define strict tenant_id, event_id, and user_role contracts across all endpoints.
+Days 3–6 | Parallel Core Build:
+RAG & Assistant: Build chunking/indexing pipeline, metadata-filtered pgvector retrieval, citations, and RBAC-scoped tools.
+Matchmaking & BI: Build attendee/session/exhibitor matching scorer and guarded NL-to-SQL service with summary generation.
+Agentic Workflows & UI: Build lead qualification & follow-up workflow with HITL approval state, plus the role-switched demo console.
+Days 7–8 | End-to-End Wiring & Hardening:
+Connect webhook triggers, HITL approve/reject flows, Redis caching, and structured latency/token logging.
+Test permission boundaries across Attendee, Exhibitor, and Organizer roles.
+Days 9–10 | Evaluation, Tuning, & Portfolio Packaging:
+Run the evaluation suite across RAG, matchmaking, SQL safety, and workflow retries; tune prompts, chunking, and model routing for latency and cost.
+Deliver architecture diagram, README, API docs, and a concise demo walkthrough.
+6. Acceptance Criteria (Definition of Done)
+Strict Tenant & RBAC Isolation: Queries never return data from another tenant/event or expose restricted fields/leads outside the caller's role.
+Grounded RAG & Safe NL-to-SQL: Event assistant cites event sources accurately with safe fallbacks; NL-to-SQL blocks non-SELECT or unscoped queries and returns clear metrics and summaries.
+Actionable Matchmaking: Recommendations surface relevant attendees, sessions, and exhibitors with clear matching reasons and respect networking privacy preferences.
+Controlled Agent Execution & Telemetry: Workflows handle API errors gracefully, pause at HITL gates for external/state-changing actions, and log latency, token usage, and audit events per request.

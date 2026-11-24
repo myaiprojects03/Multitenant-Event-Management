@@ -1,0 +1,17 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.32
+pydantic>=2.9,<3
+pydantic-settings>=2.6
+sqlalchemy[asyncio]>=2.0.36,<2.1
+asyncpg>=0.30
+alembic>=1.14
+pgvector>=0.3.6
+redis>=5.2
+arq>=0.26
+structlog>=24.4
+pyjwt>=2.10
+sqlglot>=25.0
+google-genai>=1.0
+fastembed>=0.4
+faker>=33.0
+httpx>=0.28
