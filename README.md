@@ -66,6 +66,28 @@ curl -X POST http://localhost:8000/assistant/query -H "Authorization: Bearer <ac
 - **Reasons:** built from concrete facts, then phrased by one batched Flash-Lite call (cached by fact text). Without the LLM, the template reason is used.
 - **Flows:** `POST /connections` with `/respond`, `POST /meetings` with `/respond`, `POST /leads/badge-scan`, `PUT /me/consent`, and `POST /recommendations/feedback`.
 
+## Agent workflows with human approval
+
+`POST /workflows/trigger` starts an agent; the response returns at once (`pending`) and the worker runs it.
+
+- **Lead Qualification Agent** (exhibitors, `lead_follow_up`):
+  - scores the exhibitor's own leads in code against its private criteria (interests, target industry, seniority, accepted meetings), so the score is reproducible, and writes score and tier back;
+  - Gemini Flash drafts one follow-up email per top lead from those facts only, with no prices, discounts or outside links;
+  - leads already contacted are skipped.
+- **Operations Agent** (organizers):
+  - `session_summary` drafts a recap of an ended session from its description and real attendance numbers;
+  - `schedule_change` picks a free room that fits an overbooked session's demand (in code) and drafts the attendee announcement.
+
+Every draft stops at an approval gate (`awaiting_approval`):
+
+- **Who approves:** the owner approves (exhibitors their follow-ups, organizers schedule changes and published recaps), via `GET /approvals` and `POST /workflows/{id}/decision` with `approve`/`reject`, a reason, and optional edits.
+- **What edits can change:** text only. Recipients are re-read from the database at execution, never taken from the draft.
+- **Escalation:** more than 20 recipients, or a draft (including an edited one) that mentions prices, discounts or outside links, adds an organizer approval. Unanswered approvals expire.
+- **Nothing executes without approval:** external effects exist only as rows in an outbox table, and the database policy on that table rejects any row whose workflow is not fully approved, even from system code.
+- **Double approval sends once:** the decision locks the workflow, a decided approval can't be decided again, and every action carries a unique idempotency key derived from the final approval. The simulated email provider dedupes on that key too.
+- **Failures:** transient errors retry with exponential backoff. After 4 attempts, or on a permanent error, the action is dead-lettered (and audited), and later stages are cancelled, so no announcement goes out for a room change that failed. An organizer can re-drive it with `POST /workflows/{id}/retry`.
+- **Simulated effects:** email goes to a fake provider (`GET /workflows/outbox/sent`), room changes are applied to the schedule, and recaps are published as attendee documents. Changed content is re-indexed, so the assistant answers with the new room.
+
 ## How isolation works
 
 - Three database roles: the **owner** (migrations and seeding only), **app_rw** (what the API uses; not the owner, so every RLS policy applies), and **app_readonly** (NL-to-SQL; can only `SELECT` from approved reporting views).

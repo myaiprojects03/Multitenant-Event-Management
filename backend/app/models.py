@@ -421,6 +421,10 @@ class Workflow(EventScoped, Base):
     input: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")
     output: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     error: Mapped[str | None] = mapped_column(Text)
+    # [{at, from, to, actor_role, actor_user_id, note}], appended on every transition
+    history: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
     created_at: Mapped[created_ts]
     updated_at: Mapped[created_ts]
 
@@ -428,6 +432,7 @@ class Workflow(EventScoped, Base):
 class Approval(EventScoped, Base):
     __tablename__ = "approvals"
     __extra_args__ = (
+        UniqueConstraint("workflow_id", "escalation_level", name="uq_approvals_workflow_level"),
         CheckConstraint(
             _in("status", ("pending", "approved", "rejected", "expired")), name="status_valid"
         ),
@@ -461,6 +466,44 @@ class ApprovalPolicy(EventScoped, Base):
     bulk_threshold: Mapped[int | None] = mapped_column(Integer)
     escalate_to_role: Mapped[str | None] = mapped_column(Text)
     expiry_hours: Mapped[int] = mapped_column(Integer, nullable=False, server_default="48")
+
+
+OUTBOUND_CHANNELS = ("email", "platform_api", "publish")
+OUTBOUND_STATUSES = ("queued", "retrying", "sent", "dead_letter", "cancelled")
+
+
+class OutboundAction(EventScoped, Base):
+    """The outbox: the only source of external effects. RLS admits a row only for a workflow
+    whose approvals are all approved (see migration 0005)."""
+
+    __tablename__ = "outbound_actions"
+    __extra_args__ = (
+        CheckConstraint(_in("channel", OUTBOUND_CHANNELS), name="channel_valid"),
+        CheckConstraint(_in("status", OUTBOUND_STATUSES), name="status_valid"),
+        Index("ix_outbound_actions_workflow", "workflow_id", "stage"),
+    )
+    id: Mapped[uuid_pk]
+    workflow_id: Mapped[uuid.UUID] = _fk("workflows.id")
+    approval_id: Mapped[uuid.UUID] = _fk("approvals.id")
+    owner_exhibitor_id: Mapped[uuid.UUID | None] = _fk("exhibitors.id", nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    stage: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    channel: Mapped[str] = mapped_column(Text, nullable=False)
+    recipient_user_id: Mapped[uuid.UUID | None] = _fk(
+        "users.id", nullable=True, ondelete="SET NULL"
+    )
+    recipient: Mapped[str | None] = mapped_column(Text)
+    subject: Mapped[str | None] = mapped_column(Text)
+    body: Mapped[str | None] = mapped_column(Text)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    last_error: Mapped[str | None] = mapped_column(Text)
+    next_attempt_at: Mapped[created_ts]
+    provider_message_id: Mapped[str | None] = mapped_column(Text)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[created_ts]
+    updated_at: Mapped[created_ts]
 
 
 # --- observability ----------------------------------------------------------------------------

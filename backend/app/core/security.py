@@ -109,5 +109,8 @@ async def get_db(ctx: Annotated[RequestContext, Depends(get_ctx)]) -> AsyncItera
 
 
 CtxDep = Annotated[RequestContext, Depends(get_ctx)]
-DbDep = Annotated[AsyncSession, Depends(get_db)]
+# scope="function": the session commits when the endpoint returns, *before* the response is sent,
+# so a client never sees success for an uncommitted write, and BackgroundTasks (job enqueues) run
+# only after the commit.
+DbDep = Annotated[AsyncSession, Depends(get_db, scope="function")]
 OrganizerDep = Annotated[RequestContext, Depends(require_roles("organizer"))]

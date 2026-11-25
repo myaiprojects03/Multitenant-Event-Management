@@ -10,6 +10,7 @@ from app.api.health import router as health_router
 from app.api.matchmaking import router as matchmaking_router
 from app.api.telemetry import router as telemetry_router
 from app.api.webhooks import router as webhooks_router
+from app.api.workflows import router as workflows_router
 from app.core.config import get_settings
 from app.core.db import dispose_engine
 from app.core.jobs import close_job_pool
@@ -40,4 +41,5 @@ app.include_router(assistant_router)
 app.include_router(analytics_router)
 app.include_router(matchmaking_router)
 app.include_router(webhooks_router)
+app.include_router(workflows_router)
 app.include_router(telemetry_router)

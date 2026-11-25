@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     rate_limit_per_day: int = 300
     rate_limit_per_minute_organizer: int = 40
 
+    # workflows: delivery retries (exponential backoff: base * 2^(attempt-1)) then dead-letter
+    delivery_max_attempts: int = 4
+    delivery_backoff_base_s: float = 5.0
+    # lets a workflow's params ask the simulated sender to fail (demo + tests). Off in prod.
+    allow_failure_injection: bool = True
+
     def model_chain(self, tier: str) -> list[str]:
         primary, fallbacks = (
             (self.gemini_model_fast, self.gemini_fast_fallbacks)

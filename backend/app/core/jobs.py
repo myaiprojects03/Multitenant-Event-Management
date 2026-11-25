@@ -15,8 +15,10 @@ async def get_job_pool() -> ArqRedis:
     return _pool
 
 
-async def enqueue(function: str, *args) -> str | None:
-    job = await (await get_job_pool()).enqueue_job(function, *args)
+async def enqueue(function: str, *args, defer_s: float | None = None) -> str | None:
+    job = await (await get_job_pool()).enqueue_job(
+        function, *args, _defer_by=defer_s if defer_s else None
+    )
     return job.job_id if job else None
 
 
