@@ -7,6 +7,7 @@ from app.api.assistant import router as assistant_router
 from app.api.auth import me_router
 from app.api.auth import router as auth_router
 from app.api.health import router as health_router
+from app.api.matchmaking import router as matchmaking_router
 from app.api.telemetry import router as telemetry_router
 from app.api.webhooks import router as webhooks_router
 from app.core.config import get_settings
@@ -37,5 +38,6 @@ app.include_router(auth_router)
 app.include_router(me_router)
 app.include_router(assistant_router)
 app.include_router(analytics_router)
+app.include_router(matchmaking_router)
 app.include_router(webhooks_router)
 app.include_router(telemetry_router)

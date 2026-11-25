@@ -497,3 +497,46 @@ class LlmUsageLog(EventScoped, Base):
     status: Mapped[str] = mapped_column(Text, nullable=False)
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[created_ts]
+
+
+# --- matchmaking --------------------------------------------------------------------------------
+
+VECTOR_ENTITY_TYPES = ("attendee", "session", "speaker", "exhibitor")
+FEEDBACK_KINDS = ("impression", "click", "save", "connect", "dismiss")
+TARGET_TYPES = ("peer", "session", "speaker", "exhibitor", "prospect")
+
+
+class ProfileVector(EventScoped, Base):
+    """Matchmaking vectors. Separate from `embeddings` so they are never retrievable as RAG
+    content; attendee vectors are only readable where the profile itself is (RLS)."""
+
+    __tablename__ = "profile_vectors"
+    __extra_args__ = (
+        UniqueConstraint("event_id", "entity_type", "entity_id"),
+        CheckConstraint(_in("entity_type", VECTOR_ENTITY_TYPES), name="entity_type_valid"),
+    )
+    id: Mapped[uuid_pk]
+    entity_type: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
+    updated_at: Mapped[created_ts]
+
+
+class RecommendationEvent(EventScoped, Base):
+    """Feedback loop: impressions, clicks, saves, connects, dismissals (own rows only)."""
+
+    __tablename__ = "recommendation_events"
+    __table_kwargs__ = _APPEND_ONLY
+    __extra_args__ = (
+        CheckConstraint(_in("kind", FEEDBACK_KINDS), name="kind_valid"),
+        CheckConstraint(_in("target_type", TARGET_TYPES), name="target_type_valid"),
+        Index("ix_rec_events_user", "user_id", "target_type", "kind"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[uuid.UUID] = _fk("users.id")
+    target_type: Mapped[str] = mapped_column(Text, nullable=False)
+    target_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str | None] = mapped_column(Text)  # for per-user category weights
+    created_at: Mapped[created_ts]

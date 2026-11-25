@@ -57,6 +57,15 @@ curl -X POST http://localhost:8000/assistant/query -H "Authorization: Bearer <ac
 
 `GET /analytics/anomalies` computes flags in code (capacity risk, drop-off outliers by robust z-score, lead-velocity spikes by z-score). The LLM only writes the explanation.
 
+## Matchmaking
+
+`GET /recommendations?type=peers|sessions|speakers|exhibitors` (attendees) or `?type=prospects` (exhibitors) returns ranked matches, each with a "why we matched" reason.
+
+- **Consent:** two separate opt-ins. Peers only see attendees who opted in to networking. Exhibitors only see attendees who opted in to exhibitor matching, and then as anonymized cards (`P-7B7E92`, industry, seniority, interests) produced by a SECURITY DEFINER function that never returns identity. Contact details are released only after a connection or meeting is accepted, or a badge is scanned, and only then does a lead exist.
+- **Scoring:** vector similarity, shared interests, complementary roles and needs (buyer↔seller, mentorship↔mentoring) and shared bookmarks. Per-user feedback then adjusts the score: clicks and saves boost a category, dismissals hide an item permanently, and items shown repeatedly but ignored are pushed down. A diversity re-rank keeps the top 10 varied.
+- **Reasons:** built from concrete facts, then phrased by one batched Flash-Lite call (cached by fact text). Without the LLM, the template reason is used.
+- **Flows:** `POST /connections` with `/respond`, `POST /meetings` with `/respond`, `POST /leads/badge-scan`, `PUT /me/consent`, and `POST /recommendations/feedback`.
+
 ## How isolation works
 
 - Three database roles: the **owner** (migrations and seeding only), **app_rw** (what the API uses; not the owner, so every RLS policy applies), and **app_readonly** (NL-to-SQL; can only `SELECT` from approved reporting views).

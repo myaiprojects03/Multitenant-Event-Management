@@ -20,6 +20,7 @@ from app.core.context import RequestContext, scoped_session
 from app.core.db import dispose_engine
 from app.core.embeddings import get_embedder
 from app.modules.assistant.indexer import index_event
+from app.modules.matchmaking.vectors import build_profile_vectors
 
 
 async def run(event_id: uuid.UUID | None = None) -> None:
@@ -40,9 +41,11 @@ async def run(event_id: uuid.UUID | None = None) -> None:
         t0 = time.perf_counter()
         async with scoped_session(RequestContext.system(tenant_id, eid)) as db:
             stats = await index_event(db, embedder)
+            vec = await build_profile_vectors(db, embedder)
         print(
             f"{name}: {stats.cards} cards, {stats.embedded} embedded, "
-            f"{stats.unchanged} unchanged, {stats.deleted} deleted "
+            f"{stats.unchanged} unchanged, {stats.deleted} deleted; "
+            f"matchmaking vectors {vec.embedded}/{vec.total} embedded "
             f"({time.perf_counter() - t0:.1f}s)"
         )
     await dispose_engine()
