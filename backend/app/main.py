@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.analytics import router as analytics_router
 from app.api.assistant import router as assistant_router
 from app.api.auth import me_router
 from app.api.auth import router as auth_router
@@ -35,5 +36,6 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(me_router)
 app.include_router(assistant_router)
+app.include_router(analytics_router)
 app.include_router(webhooks_router)
 app.include_router(telemetry_router)

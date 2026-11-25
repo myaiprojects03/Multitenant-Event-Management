@@ -34,8 +34,23 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         yield session
 
 
+_readonly_engine: AsyncEngine | None = None
+
+
+def get_readonly_engine() -> AsyncEngine:
+    """app_readonly: SELECT on approved reporting views only. Used by the BI copilot."""
+    global _readonly_engine
+    if _readonly_engine is None:
+        _readonly_engine = create_async_engine(
+            get_settings().readonly_database_url, pool_pre_ping=True, pool_size=3
+        )
+    return _readonly_engine
+
+
 async def dispose_engine() -> None:
-    global _engine, _sessionmaker
+    global _engine, _sessionmaker, _readonly_engine
     if _engine is not None:
         await _engine.dispose()
-    _engine, _sessionmaker = None, None
+    if _readonly_engine is not None:
+        await _readonly_engine.dispose()
+    _engine, _sessionmaker, _readonly_engine = None, None, None

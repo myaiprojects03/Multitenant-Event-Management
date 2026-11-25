@@ -5,7 +5,9 @@ Planted patterns (per main event):
   * one upcoming workshop with far more bookmarks than seats (capacity risk)
   * one exhibitor with a lead spike yesterday 13:00-15:00 (lead velocity)
   * a mix of networking / exhibitor-matching opt-ins
-"Now" is 08:00 UTC on the anchor date; the main events run anchor-2 .. anchor.
+The main events run anchor-2 .. anchor+1: two past days of history (the lead spike is
+"yesterday"), a short program today, and tomorrow's program, which holds the overbooked
+workshop so the capacity-risk demo works at any time of day after seeding.
 """
 
 import random
@@ -62,8 +64,12 @@ def _tier(score: int) -> str:
 class Generator:
     def __init__(self, anchor: date, seed: int = 42) -> None:
         self.anchor = anchor
-        # 08:00 on the anchor day: days 1-2 are fully past, every day-3 session is upcoming
-        self.now = datetime.combine(anchor, time(8, 0), UTC)
+        # "now" = the real time when seeding for today (sessions that already ended today get
+        # check-ins), noon for an explicit past/future anchor. Tomorrow is always upcoming.
+        real_now = datetime.now(UTC)
+        self.now = (
+            real_now if anchor == real_now.date() else datetime.combine(anchor, time(12), UTC)
+        )
         self.rng = random.Random(seed)
         self.fake = Faker("en_US")
         self.fake.seed_instance(seed)
@@ -366,6 +372,7 @@ class EventBuilder:
                         planted, kind, title = "dropoff", "talk", ev.dropoff_title
                     elif ev.overbooked_title and di == last_day and kind == "workshop":
                         planted, title = "overbooked", ev.overbooked_title
+                        room = labs[0]  # stable for demos: always the first lab
                     if planted is None and title in titles:
                         options = [
                             p.format(topic=_cap(t))

@@ -42,6 +42,21 @@ curl -X POST http://localhost:8000/assistant/query -H "Authorization: Bearer <ac
 5. Retrieved text is treated as untrusted data: it is wrapped in a delimited block that it cannot escape, and the model is told never to follow instructions inside it.
 6. **Freshness:** a signed platform webhook (HMAC, replay window, idempotent) applies the change, invalidates the event's cache immediately, and queues a background job that re-embeds only the affected cards.
 
+## BI copilot (organizers)
+
+`POST /analytics/nl-sql` with `{"question": "Which exhibitors generated the most qualified leads yesterday?"}` returns the SQL, the rows, a short summary and a chart suggestion. Every generated query passes through layered defenses:
+
+1. **sqlglot guard (deny by default):**
+   - exactly one SELECT, with no `SELECT INTO`, row locks or data changes hidden in CTEs;
+   - only the approved reporting views and their listed columns, with no `*` and no schema prefixes;
+   - a function allowlist, so `set_config`, `current_setting`, `pg_sleep`, `dblink` and file access are rejected;
+   - a LIMIT of at most 200.
+2. **Read-only role:** the query runs as `app_readonly`, which can read only those views, inside a read-only transaction with a 5 s timeout.
+3. **Self-scoping views:** the views filter rows to the caller's tenant and event themselves, so a query that leaves out the filter, or names another tenant, still gets only the caller's data.
+4. **One repair:** if the guard or the database rejects the SQL, the error goes back to the model once for a corrected query.
+
+`GET /analytics/anomalies` computes flags in code (capacity risk, drop-off outliers by robust z-score, lead-velocity spikes by z-score). The LLM only writes the explanation.
+
 ## How isolation works
 
 - Three database roles: the **owner** (migrations and seeding only), **app_rw** (what the API uses; not the owner, so every RLS policy applies), and **app_readonly** (NL-to-SQL; can only `SELECT` from approved reporting views).
