@@ -71,7 +71,13 @@ class EventScoped(TenantScoped):
     @declared_attr.directive
     def __table_args__(cls):
         extra = getattr(cls, "__extra_args__", ())
-        return (Index(f"ix_{cls.__tablename__}_scope", "tenant_id", "event_id"), *extra)
+        kwargs = getattr(cls, "__table_kwargs__", {})
+        return (Index(f"ix_{cls.__tablename__}_scope", "tenant_id", "event_id"), *extra, kwargs)
+
+
+# Append-only logs are written by roles that may not read them back (RLS). Postgres checks
+# RETURNING rows against the read policy, so these tables must not use implicit RETURNING.
+_APPEND_ONLY = {"implicit_returning": False}
 
 
 def _fk(target: str, nullable: bool = False, ondelete: str = "CASCADE"):
@@ -348,6 +354,7 @@ ENGAGEMENT_KINDS = ("session_check_in", "session_check_out", "booth_visit", "cli
 
 class EngagementLog(EventScoped, Base):
     __tablename__ = "engagement_logs"
+    __table_kwargs__ = _APPEND_ONLY
     __extra_args__ = (
         CheckConstraint(_in("kind", ENGAGEMENT_KINDS), name="kind_valid"),
         Index("ix_engagement_session", "session_id", "kind"),
@@ -461,6 +468,7 @@ class ApprovalPolicy(EventScoped, Base):
 
 class AuditLog(EventScoped, Base):
     __tablename__ = "audit_logs"
+    __table_kwargs__ = _APPEND_ONLY
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     actor_user_id: Mapped[uuid.UUID | None] = _fk("users.id", nullable=True, ondelete="SET NULL")
     actor_role: Mapped[str | None] = mapped_column(Text)
@@ -473,6 +481,7 @@ class AuditLog(EventScoped, Base):
 
 class LlmUsageLog(EventScoped, Base):
     __tablename__ = "llm_usage_logs"
+    __table_kwargs__ = _APPEND_ONLY
     __extra_args__ = (Index("ix_llm_usage_created", "event_id", "created_at"),)
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     request_id: Mapped[str] = mapped_column(Text, nullable=False)

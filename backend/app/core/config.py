@@ -38,9 +38,34 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr = SecretStr("")
     gemini_model_fast: str = "gemini-3.5-flash-lite"
     gemini_model_smart: str = "gemini-3.5-flash"
+    # comma-separated, tried in order when the primary model is busy/unavailable
+    gemini_fast_fallbacks: str = "gemini-3.1-flash-lite,gemini-3.5-flash"
+    gemini_smart_fallbacks: str = "gemini-3.6-flash,gemini-3.5-flash-lite"
+    llm_timeout_s: float = 30.0
+    llm_attempts_per_model: int = 2
+    llm_backoff_base_s: float = 1.0
+    # optional, for cost telemetry; free tier = 0
+    llm_price_in_per_mtok: float = 0.0
+    llm_price_out_per_mtok: float = 0.0
 
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     embedding_dim: int = 384
+    embedding_cache_dir: str = str(_REPO_ROOT / "backend" / ".cache" / "fastembed")
+
+    cache_default_ttl_s: int = 600
+    # per user: requests that hit an LLM-backed endpoint
+    rate_limit_per_minute: int = 20
+    rate_limit_per_day: int = 300
+    rate_limit_per_minute_organizer: int = 40
+
+    def model_chain(self, tier: str) -> list[str]:
+        primary, fallbacks = (
+            (self.gemini_model_fast, self.gemini_fast_fallbacks)
+            if tier == "fast"
+            else (self.gemini_model_smart, self.gemini_smart_fallbacks)
+        )
+        chain = [primary, *(m.strip() for m in fallbacks.split(",") if m.strip())]
+        return list(dict.fromkeys(chain))  # dedupe, keep order
 
 
 @lru_cache

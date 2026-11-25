@@ -5,7 +5,8 @@ Source spec: [spec.txt](spec.txt) (extracted from the .docx). The deadlines in t
 ## Progress
 - [x] Phase 0: compose stack up, `/health` OK (db + pgvector + redis).
 - [x] Phase 1: 26 tables + RLS (enabled and forced, policy-per-command), 3 DB roles, 6 reporting views + anonymized prospects view, demo JWT login, `RequestContext`, seed (2 tenants, 3 events, ~760 attendees, 88 sessions, 65 exhibitors, planted patterns verified). 38 tests incl. raw-SQL isolation suite pass.
-- [ ] Phase 2: AI plumbing
+- [x] Phase 2: LLM gateway (fast/smart model chains with fallback, hard timeout, retries with backoff on 408/429/5xx/network, Pydantic structured output, token counting), local fastembed service, scoped Redis cache with event-version invalidation, per-user rate limits (minute + day), telemetry (usage rows under RLS, redaction, request ids, access log, organizer summary/recent API, LLM self-test endpoint). Live check: both tiers return validated objects in ~1 s and are logged. 65 tests + 2 live tests pass.
+- [ ] Phase 3: Event Assistant / RAG
 
 ## Free stack (no card)
 

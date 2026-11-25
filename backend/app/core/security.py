@@ -1,5 +1,6 @@
 """JWT issue/verify plus FastAPI dependencies for auth and RBAC."""
 
+import dataclasses
 import uuid
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
@@ -79,6 +80,9 @@ async def get_ctx(
     if creds is None:
         raise _unauthorized("missing bearer token")
     ctx = decode_token(creds.credentials)
+    request_id = getattr(request.state, "request_id", None)
+    if request_id:  # one id across access log, usage rows and the X-Request-ID header
+        ctx = dataclasses.replace(ctx, request_id=request_id)
     request.state.ctx = ctx
     structlog.contextvars.bind_contextvars(
         request_id=ctx.request_id,
