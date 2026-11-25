@@ -14,7 +14,8 @@ Solo portfolio project. Spec: `docs/spec.txt`. **Build plan and locked decisions
 ## Commands
 - Services: `docker compose up -d db redis` (all: `docker compose up --build -d`)
 - Migrate: `cd backend; .\.venv\Scripts\alembic upgrade head` (runs as the owner role)
-- Seed (resets all data, anchored to today): `cd backend; .\.venv\Scripts\python -m app.seed`
+- Seed (resets all data, anchored to today, then re-indexes for the assistant): `cd backend; .\.venv\Scripts\python -m app.seed` (`--no-index` to skip)
+- Re-index only: `cd backend; .\.venv\Scripts\python -m app.ingest` (only changed cards are re-embedded)
 - API locally: `cd backend; .\.venv\Scripts\uvicorn app.main:app --reload`
 - Tests (DB tests need migrate + seed): `cd backend; .\.venv\Scripts\pytest`
 - Live Gemini tests (use quota): `$env:RUN_LIVE_LLM = "1"; .\.venv\Scripts\pytest tests/test_llm_live.py -s`
@@ -27,6 +28,9 @@ Solo portfolio project. Spec: `docs/spec.txt`. **Build plan and locked decisions
 - Reporting views (`0003_reporting_views.py`) run as owner and filter on `app_tenant()/app_event()/app_is_staff()` themselves.
 - Multi-statement SQL in migrations goes through `migrations/sqlutil.exec_script` (asyncpg runs one statement per call).
 - AI plumbing (`app/core`): `llm.py` (`get_llm().generate(..., ctx=, route_type=, tier=, schema=)`; the only Gemini entry point), `embeddings.py` (`get_embedder()`, passage vs query embeddings), `cache.py` (`ResponseCache`: key includes role, exhibitor_id, optional user_id and the event version; `invalidate_event` on content change), `ratelimit.py` (`rate_limited("llm")` dependency), `telemetry.py` (`record_usage`, request middleware, `redact`).
+- Assistant (`app/modules/assistant`): `cards.py` (entity → text card, visibility copied from the source row), `indexer.py` (hash-based upsert; `reindex_entity` also refreshes dependent cards, e.g. a session's speakers), `retrieval.py` (`hybrid_search`, `LOOKUPS`), `tools.py` (bookmark / list bookmarks / filter exhibitors; role checks in code), `service.py` (router → lookup | grounded answer | tool | refusal; cache). Staff are never refused by the router; RLS is the real boundary.
+- Webhooks (`app/api/webhooks.py`): HMAC over `"{ts}.{body}"`, 5-min replay window, delivery-id dedupe, change applied under a `system` ctx for the payload's event, then `invalidate_event` + `reindex_entity_job` (arq, `app/workers/main.py`). Ali's default login event is the *Forum*; pass `event_id` to target the summit.
+- SQLAlchemy `Row` has built-in attributes (`t`, `count`, `index`...): don't alias SQL columns to those names.
 - Append-only log tables (`engagement_logs`, `audit_logs`, `llm_usage_logs`) set `__table_kwargs__ = _APPEND_ONLY` (no implicit RETURNING): Postgres checks RETURNING rows against the read policy, so attendees could not insert otherwise. Any new write-but-not-read table needs the same.
 - Seed data: `app/seed/catalog.py` (personas, planted patterns) + `generator.py` (pure, deterministic). "Now" = 08:00 UTC on the anchor date; main events run anchor-2 .. anchor, so day 3 is upcoming.
 

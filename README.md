@@ -11,7 +11,7 @@ Requires Docker Desktop.
 ```bash
 cp .env.example .env                 # then add GEMINI_API_KEY and a long random JWT_SECRET
 docker compose up --build -d         # Postgres+pgvector, Redis, API (runs migrations), worker
-docker compose exec api python -m app.seed   # load synthetic demo data
+docker compose exec api python -m app.seed   # load synthetic demo data + index it for the assistant
 curl http://localhost:8000/health
 ```
 
@@ -25,6 +25,22 @@ curl -X POST http://localhost:8000/auth/demo-login \
      -H 'content-type: application/json' -d '{"email":"sara@northwind-health.example.com"}'
 curl http://localhost:8000/me -H "Authorization: Bearer <access_token>"
 ```
+
+Ask the event assistant (as Sara):
+
+```bash
+curl -X POST http://localhost:8000/assistant/query -H "Authorization: Bearer <access_token>" \
+     -H 'content-type: application/json' -d '{"question":"Which room is the FHIR workshop in?"}'
+```
+
+## Event assistant
+
+1. **Router** (Gemini Flash-Lite, structured output) picks one route: exact lookup, general question, action, out of scope, or restricted.
+2. **Exact lookups** (rooms, times, booths) are answered straight from SQL, so the answer is exact and costs no generation call.
+3. **General questions** use hybrid retrieval: pgvector similarity plus Postgres full-text search, merged with reciprocal rank fusion. Retrieval runs under the caller's RLS, so content the caller may not see is never retrieved. Gemini Flash then writes a grounded answer with `[n]` citations. An answer without a valid citation is replaced with "I don't know".
+4. **Actions** (bookmark a session, list bookmarks, filter exhibitors) are permission-checked in code. All ids come from the token, never from the model.
+5. Retrieved text is treated as untrusted data: it is wrapped in a delimited block that it cannot escape, and the model is told never to follow instructions inside it.
+6. **Freshness:** a signed platform webhook (HMAC, replay window, idempotent) applies the change, invalidates the event's cache immediately, and queues a background job that re-embeds only the affected cards.
 
 ## How isolation works
 

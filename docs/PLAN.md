@@ -6,7 +6,8 @@ Source spec: [spec.txt](spec.txt) (extracted from the .docx). The deadlines in t
 - [x] Phase 0: compose stack up, `/health` OK (db + pgvector + redis).
 - [x] Phase 1: 26 tables + RLS (enabled and forced, policy-per-command), 3 DB roles, 6 reporting views + anonymized prospects view, demo JWT login, `RequestContext`, seed (2 tenants, 3 events, ~760 attendees, 88 sessions, 65 exhibitors, planted patterns verified). 38 tests incl. raw-SQL isolation suite pass.
 - [x] Phase 2: LLM gateway (fast/smart model chains with fallback, hard timeout, retries with backoff on 408/429/5xx/network, Pydantic structured output, token counting), local fastembed service, scoped Redis cache with event-version invalidation, per-user rate limits (minute + day), telemetry (usage rows under RLS, redaction, request ids, access log, organizer summary/recent API, LLM self-test endpoint). Live check: both tiers return validated objects in ~1 s and are logged. 65 tests + 2 live tests pass.
-- [ ] Phase 3: Event Assistant / RAG
+- [x] Phase 3: Event assistant. Ingestion of 7 entity types into text cards (documents chunked), hash-based incremental indexing (297 cards in ~10 s; unchanged re-runs embed nothing). Hybrid retrieval (pgvector + full-text, RRF) under RLS. Flash-Lite router → deterministic SQL lookups / grounded Flash answers (an answer without a valid citation becomes "I don't know") / permission-checked tools (bookmark, list bookmarks, filter exhibitors) / refusals. Sources sanitized and treated as data. Per-role cached answers. Signed, replay-protected, idempotent platform webhook → DB change → cache invalidation → arq job re-embeds only the affected cards. `POST /assistant/query`. 86 tests + 9 live acceptance checks pass. PDF upload/extraction deferred (cut-list item 5): documents are text today.
+- [ ] Phase 4: BI Copilot / NL-to-SQL
 
 ## Free stack (no card)
 

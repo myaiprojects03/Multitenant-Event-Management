@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     embedding_dim: int = 384
     embedding_cache_dir: str = str(_REPO_ROOT / "backend" / ".cache" / "fastembed")
 
+    # simulated event platform -> us; HMAC-SHA256 over "{timestamp}.{body}"
+    webhook_secret: SecretStr = SecretStr("dev-webhook-secret")
+    webhook_max_skew_s: int = 300
+
     cache_default_ttl_s: int = 600
     # per user: requests that hit an LLM-backed endpoint
     rate_limit_per_minute: int = 20

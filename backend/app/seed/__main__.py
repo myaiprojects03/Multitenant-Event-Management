@@ -1,6 +1,6 @@
 """Reset and load the synthetic demo data.
 
-    python -m app.seed               # anchor = today (UTC): main events ran the last 2 days
+    python -m app.seed               # anchor = today (UTC); also re-indexes for the assistant
     python -m app.seed --anchor 2026-11-24 --seed 42
 
 Runs as the owner role (bypasses RLS) because it writes every tenant.
@@ -44,6 +44,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--anchor", type=date.fromisoformat, default=None)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument(
+        "--no-index", action="store_true", help="skip re-indexing for the assistant afterwards"
+    )
     args = ap.parse_args()
     t0 = time.perf_counter()
     rows = generate(args.anchor, args.seed)
@@ -52,6 +55,11 @@ def main() -> None:
     print(f"seeded in {time.perf_counter() - t0:.1f}s")
     for name, n in sorted(counts.items()):
         print(f"  {name:<24} {n:>7}")
+    if not args.no_index:  # seeding wipes embeddings; rebuild them so the assistant works
+        from app.ingest import run as ingest
+
+        print("indexing for the assistant:")
+        asyncio.run(ingest())
 
 
 if __name__ == "__main__":
