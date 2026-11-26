@@ -71,6 +71,15 @@ services:
       redis:
         condition: service_healthy
 
+  web:
+    build: ./frontend
+    environment:
+      API_URL: http://api:8000
+    ports:
+      - "${WEB_HOST_PORT:-3000}:3000"
+    depends_on:
+      - api
+
 volumes:
   pgdata:
   redisdata:

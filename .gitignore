@@ -28,4 +28,5 @@ backend/evals/reports/*.tmp
 .DS_Store
 Thumbs.db
 .vscode/
+.claude/
 .idea/

@@ -10,12 +10,14 @@ Requires Docker Desktop.
 
 ```bash
 cp .env.example .env                 # then add GEMINI_API_KEY and a long random JWT_SECRET
-docker compose up --build -d         # Postgres+pgvector, Redis, API (runs migrations), worker
+docker compose up --build -d         # Postgres+pgvector, Redis, API (runs migrations), worker, console
 docker compose exec api python -m app.seed   # load synthetic demo data + index it for the assistant
-curl http://localhost:8000/health
 ```
 
-API docs: http://localhost:8000/docs
+- Demo console: http://localhost:3000
+- API docs: http://localhost:8000/docs
+
+Console development (hot reload, proxies to the API on :8000): `cd frontend; npm install; npm run dev`.
 
 Try it:
 
@@ -32,6 +34,19 @@ Ask the event assistant (as Sara):
 curl -X POST http://localhost:8000/assistant/query -H "Authorization: Bearer <access_token>" \
      -H 'content-type: application/json' -d '{"question":"Which room is the FHIR workshop in?"}'
 ```
+
+## Demo console
+
+A Next.js console (`frontend/`) for clicking through the whole story. Pick a demo user on the sign-in page; the "View as" menu switches user or event at any time. Sessions are per browser tab, so Maya and Ali can sit side by side in two tabs for the approval flow.
+
+| Role | Screens |
+|---|---|
+| Attendee (Sara) | Event assistant with numbered sources, recommendations (people, sessions, speakers, exhibitors) with reasons and connect / save / request meeting / dismiss, the two consent switches, connections and meeting requests |
+| Exhibitor (Maya) | Anonymized prospects, meeting requests and badge scans, lead follow-ups (run the agent, review and edit each email, approve or reject), approvals |
+| Organizer (Ali) | BI copilot (summary, chart, SQL, rows) next to anomaly flags, approvals (including escalated exhibitor drafts), workflows (room changes for overbooked sessions, recaps, failure simulation, retry of dead letters, sent outbox), telemetry |
+| Everyone | Security tests: preset attacks (prompt injection, cross-tenant questions, a competitor's leads, destructive and raw-table SQL, organizer-only endpoints, a forged JWT, an unsigned webhook) run against the live API, each checked and marked Held or Leaked |
+
+The browser only talks to the console's own origin; `/api/*` is proxied to the backend (`API_URL`), so the API needs no CORS. The visual design is deliberately plain: one accent color, flat sections and tables, text status labels.
 
 ## Event assistant
 

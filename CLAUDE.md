@@ -20,6 +20,7 @@ Solo portfolio project. Spec: `docs/spec.txt`. **Build plan and locked decisions
 - Tests (DB tests need migrate + seed): `cd backend; .\.venv\Scripts\pytest`
 - Live Gemini tests (use quota): `$env:RUN_LIVE_LLM = "1"; .\.venv\Scripts\pytest tests/test_llm_live.py -s`
 - Lint/format: `cd backend; .\.venv\Scripts\ruff check . ; .\.venv\Scripts\ruff format .`
+- Console: `cd frontend; npm run dev` (port 3000, proxies `/api/*` to `API_URL`, default localhost:8000); check with `npm run build` (type-checks). In compose it is the `web` service.
 
 ## Architecture notes
 - DB roles: owner (migrations/seed), `app_rw` (API; RLS applies), `app_readonly` (NL-to-SQL; SELECT on reporting views only, read-only, 5s timeout).
@@ -39,6 +40,9 @@ Solo portfolio project. Spec: `docs/spec.txt`. **Build plan and locked decisions
 - Workflows (`app/modules/workflows`): `states.py` (transition map; every status change goes through `check_transition`), `policies.py` (`load_policy`, `approval_chain`, `flag_reasons`), `agents.py` (Lead Qualification + Operations agents; scores/rooms in code, LLM only writes text; `apply_edits` text-only), `engine.py` (trigger → run as owner → approvals → `_materialize` → `deliver`; bookkeeping via `as_system`), `sender.py` (simulated email/platform/publish, provider-side idempotency, failure injection via params `simulate`). `outbound_actions` RLS (0005) only admits rows for fully approved workflows. Worker: `run_workflow_job`, `deliver_workflow_job` (reschedules itself for backoff), cron `sweep_workflows` (uses context-free `workflow_due_work()`).
 - `DbDep` uses `Depends(get_db, scope="function")`: the request transaction commits before the response is sent, so BackgroundTasks (job enqueues) see committed rows. Keep it that way.
 - Tests that start workflows must not enqueue real jobs (monkeypatch `jobs.enqueue`) and use Redis db 15 for the simulated provider.
+
+- Console (`frontend/`): Next.js App Router, all pages client components under `app/(console)/`; `lib/api.ts` (fetch + token), `lib/session.tsx` (per-tab sessionStorage), `lib/nav.ts` (nav per role + route guard), `components/Workflow.tsx` (workflow drawer: draft editors, delivery, history). Design rules: one accent (teal), neutral surfaces, no gradients/glows/emojis/nested cards/rainbow accents; state shown as text badges. Browser tests mutate demo data (room moves, sends): reseed before `pytest`.
+- LLM gateway skips a model for `llm_busy_cooldown_s` after it exhausts its attempts on 429/503/504/timeout (per-process; `get_llm()` is cached).
 
 ## Non-negotiables
 - Every table has `tenant_id` + `event_id` and RLS; tenant/event/role/user scope comes from the authenticated `RequestContext`, never from the LLM.

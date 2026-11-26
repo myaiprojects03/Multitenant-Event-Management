@@ -5,6 +5,9 @@
 * Reliability: every call has a hard timeout. Timeouts, 429 and 5xx are retried with
   exponential backoff + jitter, then the next model in the chain is tried. Other 4xx errors
   (bad request, auth) fail immediately because retrying cannot help.
+* Cooldown: a model that exhausts its attempts on overload (429/503/504/timeout) is skipped
+  for `llm_busy_cooldown_s`, so later calls go straight to the fallback instead of paying the
+  same retries again. If every model is cooling down, the full chain is tried.
 * Structured output: pass a Pydantic model as `schema`; the response is validated against it
   and an invalid response counts as a retryable failure.
 * Telemetry: one llm_usage_logs row per gateway call (model actually used, tokens, latency).
@@ -35,6 +38,7 @@ ThinkingLevel = Literal["minimal", "low", "medium", "high"]
 T = TypeVar("T", bound=BaseModel)
 
 RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
+OVERLOAD = frozenset({"http_429", "http_503", "http_504", "timeout"})
 
 
 class LLMError(Exception):
@@ -77,10 +81,18 @@ class LLMGateway:
         client: Any | None = None,
         settings: Settings | None = None,
         sleep=asyncio.sleep,
+        clock=time.monotonic,
     ) -> None:
         self.settings = settings or get_settings()
         self._client = client
         self._sleep = sleep
+        self._clock = clock
+        self._busy_until: dict[str, float] = {}  # model -> monotonic time it may be tried again
+
+    def _available(self, chain: list[str]) -> list[str]:
+        now = self._clock()
+        ready = [m for m in chain if self._busy_until.get(m, 0.0) <= now]
+        return ready or chain
 
     @property
     def client(self) -> Any:
@@ -163,17 +175,24 @@ class LLMGateway:
         attempts = 0
         failures: list[str] = []
 
-        for model in chain:
+        for model in self._available(chain):
+            reasons: list[str] = []
             for i in range(s.llm_attempts_per_model):
                 attempts += 1
                 try:
                     resp, text, parsed = await self._attempt(model, contents, config, schema)
                 except _Retryable as exc:
                     failures.append(f"{model}:{exc.reason}")
+                    reasons.append(exc.reason)
                     log.warning("llm_retry", model=model, reason=exc.reason, attempt=attempts)
                     if i + 1 < s.llm_attempts_per_model:
                         delay = s.llm_backoff_base_s * 2**i
                         await self._sleep(delay + random.uniform(0, delay / 2))
+                    elif all(r in OVERLOAD for r in reasons) and s.llm_busy_cooldown_s > 0:
+                        self._busy_until[model] = self._clock() + s.llm_busy_cooldown_s
+                        log.warning(
+                            "llm_model_cooldown", model=model, seconds=s.llm_busy_cooldown_s
+                        )
                     continue
                 except LLMError as exc:
                     await self._record(ctx, route_type, model, t0, status="error", error=str(exc))

@@ -72,7 +72,10 @@ def gateway(script, **overrides):
     async def fake_sleep(s):
         sleeps.append(s)
 
-    return LLMGateway(client=client, settings=settings, sleep=fake_sleep), models, sleeps
+    clock = [0.0]
+    gw = LLMGateway(client=client, settings=settings, sleep=fake_sleep, clock=lambda: clock[0])
+    gw.test_clock = clock  # tests advance time with gw.test_clock[0] += seconds
+    return gw, models, sleeps
 
 
 async def call(gw, **kw):
@@ -99,6 +102,30 @@ async def test_falls_back_to_next_model_after_retries():
     r = await call(gw)
     assert models.calls == ["primary", "primary", "backup"]
     assert r.model == "backup" and r.attempts == 3
+
+
+async def test_overloaded_model_cools_down_then_is_retried():
+    gw, models, _ = gateway(
+        [server_error(), server_error(), ok(), ok(), server_error(), server_error(), ok()],
+        llm_busy_cooldown_s=60,
+    )
+    assert (await call(gw)).model == "backup"
+    # the next call skips the busy primary instead of paying its retries again
+    assert (await call(gw)).model == "backup"
+    assert models.calls == ["primary", "primary", "backup", "backup"]
+    gw.test_clock[0] += 61  # cooldown over: primary is tried first again
+    await call(gw)
+    assert models.calls[4:] == ["primary", "primary", "backup"]
+
+
+async def test_bad_output_does_not_trigger_cooldown():
+    gw, models, _ = gateway(
+        [ok("not json"), ok("not json"), ok(), ok()],
+        llm_busy_cooldown_s=60,
+    )
+    await call(gw)
+    await call(gw)
+    assert models.calls == ["primary", "primary", "backup", "primary"]
 
 
 async def test_timeout_is_retryable():

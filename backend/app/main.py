@@ -8,6 +8,7 @@ from app.api.auth import me_router
 from app.api.auth import router as auth_router
 from app.api.health import router as health_router
 from app.api.matchmaking import router as matchmaking_router
+from app.api.program import router as program_router
 from app.api.telemetry import router as telemetry_router
 from app.api.webhooks import router as webhooks_router
 from app.api.workflows import router as workflows_router
@@ -42,4 +43,5 @@ app.include_router(analytics_router)
 app.include_router(matchmaking_router)
 app.include_router(webhooks_router)
 app.include_router(workflows_router)
+app.include_router(program_router)
 app.include_router(telemetry_router)
