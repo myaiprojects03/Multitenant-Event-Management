@@ -280,8 +280,9 @@ async def api(txn):
     app.dependency_overrides.clear()
 
 
-async def login(api, email):
-    r = await api.post("/auth/demo-login", json={"email": email})
+async def login(api, email, event_id=None):
+    body = {"email": email} | ({"event_id": str(event_id)} if event_id else {})
+    r = await api.post("/auth/demo-login", json=body)
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
@@ -295,15 +296,21 @@ async def email_of(txn, ctx, user_id):
 async def test_connection_flow_releases_contact_only_after_accept(api, ctx_for, txn):
     sara = await ctx_for("sara")
     hs = await login(api, PERSONA_EMAILS["sara"])
-    peers = (await api.get("/recommendations?type=peers&limit=3&phrase=false", headers=hs)).json()
-    peer_user = peers["items"][0]["data"]["user_id"]
+    peers = (await api.get("/recommendations?type=peers&limit=10&phrase=false", headers=hs)).json()
+    # the seed (dated relative to today) may already link Sara to a top peer, e.g. their pending
+    # request to her; this flow needs someone she has no connection with yet
+    known = {str(c["other_user_id"]) for c in (await api.get("/connections", headers=hs)).json()}
+    peer_user = next(
+        p["data"]["user_id"] for p in peers["items"] if p["data"]["user_id"] not in known
+    )
     r = await api.post("/connections", json={"user_id": peer_user}, headers=hs)
-    assert r.status_code == 201 and r.json()["status"] == "pending"
+    assert r.status_code == 201 and r.json()["status"] == "pending" and r.json()["created"]
     mine = (await api.get("/connections", headers=hs)).json()
     pending = next(c for c in mine if str(c["other_user_id"]) == peer_user)
     assert pending["contact_email"] is None  # nothing shared yet
 
-    hp = await login(api, await email_of(txn, sara, peer_user))
+    # some attendees are in both Northwind events: log the peer into Sara's event, not their first
+    hp = await login(api, await email_of(txn, sara, peer_user), sara.event_id)
     assert (
         await api.post(f"/connections/{r.json()['id']}/respond", json={"accept": True}, headers=hp)
     ).status_code == 200
@@ -352,7 +359,7 @@ async def test_prospect_meeting_creates_lead_only_on_accept(api, ctx_for, txn):
             {"p": prospect["target_id"]},
         )
     )[0]["user_id"]
-    ha = await login(api, await email_of(txn, maya, user_id))
+    ha = await login(api, await email_of(txn, maya, user_id), maya.event_id)
     assert (
         await api.post(f"/meetings/{meeting_id}/respond", json={"accept": True}, headers=ht)
     ).status_code == 404  # competitor can't touch it
