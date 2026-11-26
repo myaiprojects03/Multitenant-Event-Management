@@ -1,0 +1,106 @@
+# Agent workflows under failure. Each scenario runs the real engine and simulated provider
+# in a rolled-back transaction, with the LLM replaced by one that always fails, so the agents
+# use their template drafts (deterministic and free). Expectations are checked on the final
+# workflow row and its outbound actions.
+#
+# steps: approve_as <persona> [edits], reject_as <persona>, deliver (repeat until done),
+#        expire, retry_as <persona>
+# expect: status, sent, dead_letter, cancelled, chain (approval roles in order),
+#         max_attempts, refused (an action the engine must refuse, with its HTTP-like code)
+
+scenarios:
+  - id: happy-path
+    as: maya
+    kind: lead_follow_up
+    params: {max_messages: 3}
+    steps: [approve_as maya, deliver]
+    expect: {status: completed, sent: 3, chain: [exhibitor]}
+
+  - id: nothing-before-approval
+    as: maya
+    kind: lead_follow_up
+    params: {max_messages: 3}
+    steps: [deliver]
+    expect: {status: awaiting_approval, sent: 0}
+
+  - id: double-approval-sends-once
+    as: maya
+    kind: lead_follow_up
+    params: {max_messages: 2}
+    steps: [approve_as maya, approve_as maya, deliver, deliver]
+    expect: {status: completed, sent: 2, refused: 409}
+
+  - id: wrong-approver
+    as: maya
+    kind: lead_follow_up
+    params: {max_messages: 2}
+    steps: [approve_as tom]
+    expect: {status: awaiting_approval, sent: 0, refused: 404}
+
+  - id: reject-sends-nothing
+    as: maya
+    kind: lead_follow_up
+    params: {max_messages: 2}
+    steps: [reject_as maya, deliver]
+    expect: {status: rejected, sent: 0}
+
+  - id: bulk-escalates
+    as: maya
+    kind: lead_follow_up
+    params: {max_messages: 25, tiers: [A, B, C, D]}
+    steps: [approve_as maya, deliver, approve_as ali, deliver]
+    expect: {status: completed, chain: [exhibitor, organizer], min_sent: 21}
+
+  - id: risky-edit-escalates
+    as: maya
+    kind: lead_follow_up
+    params: {max_messages: 1}
+    steps: [approve_as maya with_discount, deliver]
+    expect: {status: awaiting_approval, sent: 0, chain: [exhibitor, organizer]}
+
+  - id: transient-failure-retries
+    as: maya
+    kind: lead_follow_up
+    params: {max_messages: 2, simulate: {fail_times: 2}}
+    steps: [approve_as maya, deliver]
+    expect: {status: completed, sent: 2, max_attempts: 3}
+
+  - id: persistent-failure-dead-letters
+    as: maya
+    kind: lead_follow_up
+    params: {max_messages: 2, simulate: {fail_times: 10}}
+    steps: [approve_as maya, deliver]
+    expect: {status: failed, sent: 0, dead_letter: 2, max_attempts: 4}
+
+  - id: room-change-permanent-failure-then-retry
+    as: ali
+    event: HealthTech
+    kind: schedule_change
+    session: overbooked
+    params: {simulate: {permanent: true}}
+    steps: [approve_as ali, deliver, retry_as ali, deliver]
+    expect: {status: completed, dead_letter: 0, min_sent: 2}
+
+  - id: room-change-failure-cancels-announcements
+    as: ali
+    event: HealthTech
+    kind: schedule_change
+    session: overbooked
+    params: {simulate: {permanent: true}}
+    steps: [approve_as ali, deliver]
+    expect: {status: failed, dead_letter: 1, min_cancelled: 1, sent: 0}
+
+  - id: expiry
+    as: maya
+    kind: lead_follow_up
+    params: {max_messages: 1}
+    steps: [expire, approve_as maya]
+    expect: {status: expired, sent: 0}
+
+  - id: recap-publishes-once
+    as: ali
+    event: HealthTech
+    kind: session_summary
+    session: ended
+    steps: [approve_as ali, deliver, deliver]
+    expect: {status: completed, sent: 1}

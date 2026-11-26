@@ -1,0 +1,57 @@
+# Matchmaking relevance: precision@5 against labelled pairs.
+#
+# Labels are derived from what people declared, not from the ranker's own scores:
+#   sessions / speakers / exhibitors: relevant when its tags or topics share at least one
+#       interest with the attendee.
+#   peers: relevant when the two share an interest, or the other person offers something
+#       this attendee is looking for (or the reverse).
+#   prospects (exhibitor view): relevant when the attendee's interests overlap the
+#       exhibitor's tags.
+# The report also shows the base rate (precision of 5 random eligible candidates) so the
+# lift over chance is visible, and checks hand-labelled must-haves for the demo personas.
+# Recommendations run in a rolled-back transaction, without LLM rewording.
+
+k: 5
+
+subjects:
+  # demo personas
+  - {as: sara, types: [peers, sessions, speakers, exhibitors]}
+  - {as: leo, types: [peers, sessions, speakers, exhibitors]}
+  - {as: maya, types: [prospects]}
+  - {as: tom, types: [prospects]}
+  - {as: nina, types: [prospects]}
+  # generated attendees who opted in to both, picked deterministically per event
+  - sample_attendees: 8
+    event: HealthTech
+    types: [peers, sessions, exhibitors]
+  - sample_attendees: 4
+    event: DevWorld
+    types: [peers, sessions, exhibitors]
+
+# hand labels: at least one of these must appear in the top k
+must_include:
+  - id: sara-sessions-fhir-or-radiology
+    as: sara
+    type: sessions
+    any_of: >
+      SELECT string_agg(id::text, '|') FROM sessions
+      WHERE event_id = :event AND tags && ARRAY['FHIR', 'radiology AI']
+  - id: sara-exhibitors-imaging
+    as: sara
+    type: exhibitors
+    any_of: >
+      SELECT string_agg(id::text, '|') FROM exhibitors
+      WHERE event_id = :event AND category = 'Medical Imaging'
+  - id: leo-exhibitors-observability
+    as: leo
+    type: exhibitors
+    any_of: >
+      SELECT string_agg(id::text, '|') FROM exhibitors
+      WHERE event_id = :event AND tags && ARRAY['observability', 'kubernetes']
+  - id: maya-prospects-imaging
+    as: maya
+    type: prospects
+    any_of: >
+      SELECT string_agg(p.id::text, '|') FROM attendee_profiles p
+      WHERE p.event_id = :event AND p.exhibitor_matching_opt_in
+        AND p.interests && ARRAY['radiology AI', 'medical imaging']

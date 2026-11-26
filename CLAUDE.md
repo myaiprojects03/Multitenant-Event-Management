@@ -20,6 +20,7 @@ Solo portfolio project. Spec: `docs/spec.txt`. **Build plan and locked decisions
 - Tests (DB tests need migrate + seed): `cd backend; .\.venv\Scripts\pytest`
 - Live Gemini tests (use quota): `$env:RUN_LIVE_LLM = "1"; .\.venv\Scripts\pytest tests/test_llm_live.py -s`
 - Lint/format: `cd backend; .\.venv\Scripts\ruff check . ; .\.venv\Scripts\ruff format .`
+- Evals (reseed first): `cd backend; .\.venv\Scripts\python -m evals.run` (full, ~20 min, uses quota; writes `evals/reports/latest.md` + `.json`), `--sample 5` (quick, writes `sample.md`), `--no-llm --strict` (deterministic part; CI runs it), `--suites rag,nl_sql`.
 - Console: `cd frontend; npm run dev` (port 3000, proxies `/api/*` to `API_URL`, default localhost:8000); check with `npm run build` (type-checks). In compose it is the `web` service.
 
 ## Architecture notes
@@ -43,6 +44,9 @@ Solo portfolio project. Spec: `docs/spec.txt`. **Build plan and locked decisions
 
 - Console (`frontend/`): Next.js App Router, all pages client components under `app/(console)/`; `lib/api.ts` (fetch + token), `lib/session.tsx` (per-tab sessionStorage), `lib/nav.ts` (nav per role + route guard), `components/Workflow.tsx` (workflow drawer: draft editors, delivery, history). Design rules: one accent (teal), neutral surfaces, no gradients/glows/emojis/nested cards/rainbow accents; state shown as text badges. Browser tests mutate demo data (room moves, sends): reseed before `pytest`.
 - LLM gateway skips a model for `llm_busy_cooldown_s` after it exhausts its attempts on 429/503/504/timeout (per-process; `get_llm()` is cached).
+
+- Evals (`backend/evals`): golden YAML in `golden/` (facts the seed generates are looked up with owner SQL `vars`, so sets survive a reseed), `harness.py` (in-process ASGI client, demo logins, owner SQL, request ids `ev<run>-...` to pull tokens from llm_usage_logs), `suites/*` (rag, rbac, nl_sql, sql_safety, matching, workflows), `report.py`. Matching and workflow suites run in rolled-back transactions; only `latest.*` reports are committed. A new planted secret or role rule belongs in `golden/rbac.yaml`.
+- Gemini free-tier smart models (3.5/3.6-flash) can be out of daily quota (429): the gateway then answers with flash-lite, which the eval report shows under "Models used".
 
 ## Non-negotiables
 - Every table has `tenant_id` + `event_id` and RLS; tenant/event/role/user scope comes from the authenticated `RequestContext`, never from the LLM.

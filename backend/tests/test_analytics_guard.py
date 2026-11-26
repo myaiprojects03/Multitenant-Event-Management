@@ -26,6 +26,8 @@ ALLOWED = [
     "SELECT industry, attendees, rank() OVER (ORDER BY attendees DESC) AS r FROM attendee_optin_v",
     "SELECT exhibitor_name FROM exhibitor_performance_v WHERE leads > "
     "(SELECT avg(leads) FROM exhibitor_performance_v)",
+    "SELECT count(*) AS n FROM session_attendance_v",
+    "SELECT session_kind, count(*) AS n FROM session_attendance_v GROUP BY session_kind",
 ]
 
 
@@ -43,6 +45,8 @@ BLOCKED = {
     "multi-statement": ("SELECT 1; DROP TABLE leads", "exactly one statement"),
     "two-selects": ("SELECT title FROM session_attendance_v; SELECT 1", "exactly one"),
     "star": ("SELECT * FROM session_attendance_v", "SELECT *"),
+    "table-star": ("SELECT s.* FROM session_attendance_v s", "SELECT *"),
+    "star-beside-count": ("SELECT count(*), * FROM session_attendance_v", "SELECT *"),
     "base-table": ("SELECT email FROM users", "unknown or forbidden table"),
     "leads-table": ("SELECT score FROM leads", "unknown or forbidden table"),
     "schema-prefix": ("SELECT title FROM public.session_attendance_v", "schema-qualified"),

@@ -8,6 +8,7 @@ question -> cache? -> router (Flash-Lite, structured) ->
 Answers without at least one valid citation are replaced by "I don't know".
 """
 
+import re
 import time
 from datetime import UTC, datetime
 
@@ -47,12 +48,19 @@ OUT_OF_SCOPE = (
     "and logistics."
 )
 UNAVAILABLE = "The assistant is busy right now. Please try again in a moment."
+_COMMERCIAL = re.compile(
+    r"\b(discounts?|pric(e|es|ing)|costs?|deals?|rebates?|quotes?|contracts?|special offers?)\b",
+    re.IGNORECASE,
+)
 
 ROUTER_SYSTEM = """You route questions for the assistant of the event "{event}".
-The user's role is: {role}.
+The user's role is: {role}.{employer}
 Pick exactly one route:
-- exact_lookup: where or when ONE specific named session, exhibitor or booth, speaker, or room is.
-  Set lookup_kind and entity_query to just the name fragment (e.g. "FHIR workshop", "MedScan").
+- exact_lookup: schedule facts about ONE specific named session, exhibitor or booth, speaker,
+  or room: where or when it is, who speaks at a session, what a speaker presents, a room's
+  floor or seats. Set lookup_kind and entity_query to just the name fragment (e.g. "FHIR
+  workshop", "MedScan", "Auditorium"). Pricing, discounts, deals, offers or policies of a
+  named exhibitor are NOT lookups: use general.
 - action: the user wants something done:
   bookmark_session (action_arg = the session title fragment), list_bookmarks,
   filter_exhibitors (action_arg = category or topic, e.g. "medical imaging").
@@ -123,14 +131,24 @@ class AssistantService:
             )
         return result
 
-    async def route(self, ctx: RequestContext, question: str, event: str) -> RouteDecision:
+    async def route(
+        self, ctx: RequestContext, question: str, event: str, exhibitor: str | None = None
+    ) -> RouteDecision:
+        # an exhibitor's own private material (pricing, discounts) is theirs to ask about;
+        # RLS still decides what is actually retrieved
+        employer = (
+            f"\nThe user works for the exhibitor {exhibitor}: questions about {exhibitor}'s own "
+            "information (pricing, discounts, booth, notes) are allowed, not restricted."
+            if exhibitor
+            else ""
+        )
         resp = await self.llm.generate(
             f"<question>{question}</question>",
             ctx=ctx,
             route_type="assistant.router",
             tier="fast",
             schema=RouteDecision,
-            system=ROUTER_SYSTEM.format(event=event, role=ctx.role),
+            system=ROUTER_SYSTEM.format(event=event, role=ctx.role, employer=employer),
             temperature=0,
         )
         return resp.parsed
@@ -138,7 +156,17 @@ class AssistantService:
     async def _answer(
         self, db: AsyncSession, ctx: RequestContext, question: str, event: str
     ) -> AssistantAnswer:
-        decision = await self.route(ctx, question, event)
+        exhibitor = None
+        if ctx.exhibitor_id:
+            exhibitor = (
+                await db.execute(text("SELECT name FROM exhibitors WHERE id = app_exhibitor()"))
+            ).scalar()
+        decision = await self.route(ctx, question, event, exhibitor)
+
+        # Lookups only know schedule facts (room, time, booth, speakers); a commercial question
+        # about a named exhibitor needs the FAQs/documents, so it always goes to retrieval.
+        if decision.route == "exact_lookup" and _COMMERCIAL.search(question):
+            decision = decision.model_copy(update={"route": "general"})
 
         # The router refuses as a courtesy; RLS is the actual boundary. Staff may see every
         # visibility level in their event, so a "restricted" guess is just a normal question.

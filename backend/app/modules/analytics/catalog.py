@@ -74,11 +74,11 @@ VIEWS: dict[str, dict] = {
         "about": "One row per day of peer networking and exhibitor meetings.",
         "columns": {
             "day": "date (UTC)",
-            "connection_requests": "int",
-            "connections_accepted": "int",
+            "connection_requests": "int, attendee-to-attendee (peer) connection requests",
+            "connections_accepted": "int, peer connection requests accepted",
             "connection_accept_pct": "numeric",
-            "meeting_requests": "int",
-            "meetings_accepted": "int",
+            "meeting_requests": "int, attendee-exhibitor meeting requests",
+            "meetings_accepted": "int, attendee-exhibitor meetings accepted",
         },
     },
     "attendee_optin_v": {

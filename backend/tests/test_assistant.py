@@ -332,3 +332,22 @@ async def test_llm_outage_is_graceful_and_not_cached(ctx_for, session_as, redis)
         r = await s.answer(db, sara, "Is lunch provided?")
         assert r.answer == svc_mod.UNAVAILABLE
         assert not (await s.answer(db, sara, "Is lunch provided?")).cached
+
+
+def test_commercial_questions_never_use_the_schedule_lookup():
+    """Lookups only know rooms, times, booths and speakers; pricing needs retrieval."""
+    from app.modules.assistant.service import _COMMERCIAL
+
+    for q in [
+        "What discount can MedScan offer at the show?",
+        "How much does the MedScan enterprise plan cost?",
+        "Any special offers at CardioVue?",
+        "What is MedScan's list price?",
+    ]:
+        assert _COMMERCIAL.search(q), q
+    for q in [
+        "Where is the MedScan booth?",
+        "Who is speaking at Building Trust in FHIR?",
+        "Which exhibitors offer telehealth?",
+    ]:
+        assert not _COMMERCIAL.search(q), q

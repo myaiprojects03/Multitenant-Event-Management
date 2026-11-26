@@ -118,6 +118,18 @@ async def test_overloaded_model_cools_down_then_is_retried():
     assert models.calls[4:] == ["primary", "primary", "backup"]
 
 
+async def test_quota_429_moves_on_at_once_and_cooling_models_are_last_resort():
+    gw, models, sleeps = gateway(
+        [server_error(429), ok(), server_error(503), server_error(503), ok()],
+        llm_busy_cooldown_s=60,
+    )
+    assert (await call(gw)).model == "backup"
+    assert models.calls == ["primary", "backup"] and sleeps == []  # no retry, no backoff
+    # backup now fails twice; the cooling primary gets one last-resort attempt and answers
+    assert (await call(gw)).model == "primary"
+    assert models.calls[2:] == ["backup", "backup", "primary"]
+
+
 async def test_bad_output_does_not_trigger_cooldown():
     gw, models, _ = gateway(
         [ok("not json"), ok("not json"), ok(), ok()],

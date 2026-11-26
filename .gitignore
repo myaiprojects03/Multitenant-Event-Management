@@ -23,6 +23,10 @@ out/
 
 # eval outputs
 backend/evals/reports/*.tmp
+# only the full run (latest.*) is committed
+backend/evals/reports/sample.*
+backend/evals/reports/nollm.*
+backend/evals/reports/ci.*
 
 # os / editors
 .DS_Store

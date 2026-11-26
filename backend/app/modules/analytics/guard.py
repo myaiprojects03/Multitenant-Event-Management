@@ -138,7 +138,8 @@ def guard_sql(sql: str) -> GuardedSql:
     if not views:
         _reject("query must read from at least one approved view")
 
-    if stmt.find(exp.Star):
+    # count(*) is fine; any other star (SELECT *, t.*) would expose columns by accident
+    if any(not isinstance(s.parent, exp.Count) for s in stmt.find_all(exp.Star)):
         _reject("SELECT * is not allowed; list the columns")
     allowed = set().union(*(ALLOWED_COLUMNS[v] for v in views)) | aliases
     for col in stmt.find_all(exp.Column):

@@ -1,0 +1,217 @@
+# Event assistant: answer correctness and grounding.
+#
+# Each case logs in as a persona and asks one question through POST /assistant/query.
+#   vars:   SQL run as the owner before the question; :event is the persona's event id. The
+#           first row's columns become {placeholders} in the question and the expectations,
+#           so cases survive a reseed (titles and times are generated).
+#   expect: any   - at least one of these strings appears in the answer (case-insensitive)
+#           all   - every one of these appears
+#           route - the router's route must be one of these
+#           cite  - the answer must carry at least one citation (grounded); not required
+#                   when the assistant answers with a tool (route "action": database rows)
+#           unknown - the assistant must decline (I don't know / out of scope / restricted)
+# Every citation is also checked: it must exist in the persona's event and be visible to the
+# persona's role (a citation of something you may not see counts as a leak, see rbac.yaml).
+
+defaults:
+  as: sara
+
+cases:
+  # --- logistics FAQs and documents (fixed facts in the seed catalog) ---------------------
+  - id: wifi
+    q: What is the wifi password?
+    expect: {all: ["Summit2026!"], cite: true}
+  - id: venue
+    q: Where is the summit taking place?
+    expect: {any: ["Harborview"], cite: true}
+  - id: badge-pickup
+    q: Where and when do I pick up my badge?
+    expect: {all: ["08:00", "lobby"], cite: true}
+  - id: lunch
+    q: Is lunch provided, and when?
+    expect: {any: ["12:00"], cite: true}
+  - id: recordings
+    q: Are the sessions recorded?
+    expect: {any: ["48 hours"], cite: true}
+  - id: workshops-recorded
+    q: Will the workshops be recorded?
+    expect: {any: ["not recorded", "aren't recorded", "are not"], cite: true}
+  - id: accessibility
+    q: Is the venue wheelchair accessible?
+    expect: {any: ["step-free", "wheelchair"], cite: true}
+  - id: networking-howto
+    q: How can I connect with other attendees?
+    expect: {any: ["networking"], cite: true}
+  - id: lounge
+    q: Where is the attendee lounge?
+    expect: {any: ["main hall"], cite: true}
+  - id: certificate
+    q: Do I get a certificate of attendance?
+    expect: {any: ["certificate"], all: ["week"], cite: true}
+  - id: recorded-days
+    q: How long can I watch recorded sessions after the event?
+    expect: {any: ["90 days"], cite: true}
+  - id: first-aid
+    q: Where is first aid?
+    expect: {any: ["help desk"], cite: true}
+  - id: photo-consent
+    q: Can I take photos of other attendees?
+    expect: {any: ["consent"], cite: true}
+  - id: lab-floor
+    q: Which floor is Workshop Lab 1 on?
+    expect: {any: ["Level 2"], cite: true}
+  - id: auditorium-seats
+    q: How many people does the Auditorium seat?
+    expect: {any: ["800"], cite: true}
+
+  # --- exhibitors --------------------------------------------------------------------------
+  - id: booth-medscan
+    q: Where is the MedScan booth?
+    expect: {any: ["B12"]}
+  - id: booth-cardiovue
+    q: What booth is CardioVue at?
+    expect: {any: ["B14"]}
+  - id: exhibitors-imaging
+    q: Which exhibitors work on medical imaging?
+    vars: >
+      SELECT string_agg(name, '|') AS names FROM exhibitors
+      WHERE event_id = :event AND category = 'Medical Imaging'
+    expect: {any_of_var: names, cite: true}
+  - id: exhibitors-security
+    q: Are there any exhibitors focused on health cybersecurity?
+    vars: >
+      SELECT string_agg(name, '|') AS names FROM exhibitors
+      WHERE event_id = :event AND category = 'Health Cybersecurity'
+    expect: {any_of_var: names, cite: true}
+
+  # --- schedule lookups (generated program: resolved from the DB) ------------------------
+  - id: room-overbooked-workshop
+    q: Which room is the FHIR workshop in?
+    expect: {any: ["Workshop Lab 1"], route: [exact_lookup, general]}
+  - id: room-1
+    vars: >
+      SELECT s.title, r.name AS room, to_char(s.starts_at AT TIME ZONE 'UTC', 'HH24:MI') AS hhmm
+      FROM sessions s JOIN rooms r ON r.id = s.room_id
+      WHERE s.event_id = :event AND s.kind = 'talk' ORDER BY s.title OFFSET 0 LIMIT 1
+    q: Which room is "{title}" in?
+    expect: {any: ["{room}"]}
+  - id: room-2
+    vars: >
+      SELECT s.title, r.name AS room FROM sessions s JOIN rooms r ON r.id = s.room_id
+      WHERE s.event_id = :event AND s.kind = 'talk' ORDER BY s.title OFFSET 7 LIMIT 1
+    q: Where is "{title}" happening?
+    expect: {any: ["{room}"]}
+  - id: room-3
+    vars: >
+      SELECT s.title, r.name AS room FROM sessions s JOIN rooms r ON r.id = s.room_id
+      WHERE s.event_id = :event AND s.kind = 'panel' ORDER BY s.title LIMIT 1
+    q: What room is the session {title} in?
+    expect: {any: ["{room}"]}
+  - id: room-keynote
+    vars: >
+      SELECT s.title, r.name AS room FROM sessions s JOIN rooms r ON r.id = s.room_id
+      WHERE s.event_id = :event AND s.kind = 'keynote' LIMIT 1
+    q: Where is the opening keynote?
+    expect: {any: ["{room}"]}
+  - id: time-1
+    vars: >
+      SELECT s.title, to_char(s.starts_at AT TIME ZONE 'UTC', 'HH24:MI') AS hhmm FROM sessions s
+      WHERE s.event_id = :event AND s.kind = 'talk' ORDER BY s.title OFFSET 3 LIMIT 1
+    q: What time does "{title}" start?
+    expect: {any: ["{hhmm}"]}
+  - id: time-2
+    vars: >
+      SELECT s.title, to_char(s.starts_at AT TIME ZONE 'UTC', 'HH24:MI') AS hhmm FROM sessions s
+      WHERE s.event_id = :event AND s.kind = 'workshop' ORDER BY s.title LIMIT 1
+    q: When is {title}?
+    expect: {any: ["{hhmm}"]}
+  - id: time-keynote
+    vars: >
+      SELECT to_char(s.starts_at AT TIME ZONE 'UTC', 'HH24:MI') AS hhmm FROM sessions s
+      WHERE s.event_id = :event AND s.kind = 'keynote' LIMIT 1
+    q: What time is the opening keynote?
+    expect: {any: ["{hhmm}"]}
+  - id: speaker-of-session-1
+    vars: >
+      SELECT s.title, string_agg(sp.full_name, '|') AS speakers FROM sessions s
+      JOIN session_speakers ss ON ss.session_id = s.id JOIN speakers sp ON sp.id = ss.speaker_id
+      WHERE s.event_id = :event AND s.kind = 'talk'
+      GROUP BY s.id, s.title ORDER BY s.title OFFSET 2 LIMIT 1
+    q: Who is speaking at "{title}"?
+    expect: {any_of_var: speakers}
+  - id: speaker-of-session-2
+    vars: >
+      SELECT s.title, string_agg(sp.full_name, '|') AS speakers FROM sessions s
+      JOIN session_speakers ss ON ss.session_id = s.id JOIN speakers sp ON sp.id = ss.speaker_id
+      WHERE s.event_id = :event AND s.kind = 'panel'
+      GROUP BY s.id, s.title ORDER BY s.title LIMIT 1
+    q: Who are the panelists on {title}?
+    expect: {any_of_var: speakers}
+  - id: sessions-of-speaker
+    vars: >
+      SELECT sp.full_name, string_agg(s.title, '|') AS titles FROM speakers sp
+      JOIN session_speakers ss ON ss.speaker_id = sp.id JOIN sessions s ON s.id = ss.session_id
+      WHERE sp.event_id = :event GROUP BY sp.id, sp.full_name ORDER BY sp.full_name LIMIT 1
+    q: What is {full_name} presenting?
+    expect: {any_of_var: titles, cite: true}
+  - id: speaker-company
+    vars: >
+      SELECT full_name, company FROM speakers
+      WHERE event_id = :event AND company IS NOT NULL ORDER BY full_name OFFSET 4 LIMIT 1
+    q: Which company is {full_name} from?
+    expect: {any: ["{company}"], cite: true}
+
+  # --- topical (grounded synthesis over several sources) ---------------------------------
+  - id: topic-fhir
+    q: Which sessions cover FHIR?
+    vars: >
+      SELECT string_agg(title, '|') AS titles FROM sessions
+      WHERE event_id = :event AND 'FHIR' = ANY(tags)
+    expect: {any_of_var: titles, cite: true}
+  - id: topic-radiology
+    q: What are the best sessions on radiology AI?
+    vars: >
+      SELECT string_agg(title, '|') AS titles FROM sessions
+      WHERE event_id = :event AND 'radiology AI' = ANY(tags)
+    expect: {any_of_var: titles, cite: true}
+  - id: topic-rpm-exhibitors
+    q: Which exhibitors offer remote patient monitoring?
+    vars: >
+      SELECT string_agg(name, '|') AS names FROM exhibitors
+      WHERE event_id = :event AND category = 'Remote Monitoring'
+    expect: {any_of_var: names, cite: true}
+
+  # --- permitted private content (the role may see it) -----------------------------------
+  - id: exhibitor-own-discount
+    as: maya
+    q: What discount can MedScan offer at the show?
+    expect: {any: ["15%"], cite: true}
+  - id: exhibitor-own-price
+    as: maya
+    q: How much does MedScan's enterprise plan cost per year?
+    expect: {any: ["48,000"], cite: true}
+  - id: exhibitor-own-offers
+    as: maya
+    q: Are there any special deals we're allowed to give visitors at our booth?
+    expect: {any: ["15%"], cite: true}
+  - id: organizer-green-room
+    as: ali
+    event: HealthTech
+    q: What is the VIP green room access code?
+    expect: {any: ["7319"], cite: true}
+  - id: other-event-wifi
+    as: ali
+    event: Clinical
+    q: What is the wifi network?
+    expect: {any: ["RMC-Visitor"], cite: true}
+
+  # --- not in the content: must decline, not invent ---------------------------------------
+  - id: unknown-parking
+    q: How much does parking at the venue cost per day?
+    expect: {unknown: true}
+  - id: out-of-scope-trivia
+    q: Who won the football World Cup in 2022?
+    expect: {unknown: true}
+  - id: out-of-scope-code
+    q: Write me a Python function that sorts a list.
+    expect: {unknown: true}

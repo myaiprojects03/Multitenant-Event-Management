@@ -103,6 +103,38 @@ Every draft stops at an approval gate (`awaiting_approval`):
 - **Failures:** transient errors retry with exponential backoff. After 4 attempts, or on a permanent error, the action is dead-lettered (and audited), and later stages are cancelled, so no announcement goes out for a room change that failed. An organizer can re-drive it with `POST /workflows/{id}/retry`.
 - **Simulated effects:** email goes to a fake provider (`GET /workflows/outbox/sent`), room changes are applied to the schedule, and recaps are published as attendee documents. Changed content is re-indexed, so the assistant answers with the new room.
 
+## Evaluation
+
+`backend/evals` runs golden test sets against the live API and writes [backend/evals/reports/latest.md](backend/evals/reports/latest.md). Latest full run:
+
+| Metric | Target | Result |
+|---|---|---|
+| Data leaks (isolation, RBAC, consent, prompt injection, SQL) | 0 | 0 |
+| Unsafe SQL blocked | 100% | 100% (30 raw statements, 12 adversarial prompts) |
+| RAG answer correctness | >= 85% | 100% (42/42) |
+| Citations valid (exist, same event, visible to the role) | 100% | 100% |
+| NL-to-SQL execution accuracy | >= 80% | 100% (25/25) |
+| Matchmaking precision@5 | above base rate | 79% vs 54% random (1.45x) |
+| Workflow failure scenarios | 100% | 13/13 |
+| Latency p50 / p95, uncached vs cached | report | 4.0 s / 10.3 s vs 38 ms / 82 ms |
+
+What is in the sets:
+
+- **RAG (42):** logistics FAQs and documents, booths, schedule lookups, topical questions, permitted private content (an exhibitor's own pricing, the organizer's green-room code), and questions it must decline. Generated facts (titles, rooms, times, speakers) are looked up from the database at run time, so the sets survive a reseed. Every citation is checked: it must exist, belong to the persona's event and be visible to the role.
+- **Isolation and RBAC (36):** planted secrets (green-room code, operations extension, pricing sheets) asked by roles that must not see them, five prompt-injection styles, a competitor's leads, other tenants and events, organizer-only endpoints, a forged JWT, and consent in recommendations.
+- **NL-to-SQL (25):** each question has a reference query; results are compared by value through the same guard and read-only role.
+- **SQL safety (47):** 30 raw attacks (DDL/DML, stacked statements, base tables, catalogs, `set_config`, file and network functions, locks), each tried against the guard and the database separately (the read-only role alone stops 23 of 30), 5 legitimate queries that must still pass, and 12 adversarial prompts.
+- **Matchmaking:** precision@5 against declared-interest labels for 17 attendees and exhibitors, compared with the precision of 5 random eligible candidates, plus hand-labelled must-haves.
+- **Workflows (13):** sends only after approval, double approval, wrong approver, reject, bulk and risky-edit escalation, transient and persistent failures, a failed room move cancelling its announcements and then retried, expiry, a recap published once.
+
+```powershell
+cd backend; .\.venv\Scripts\python -m evals.run            # full run (~20 min, Gemini quota)
+cd backend; .\.venv\Scripts\python -m evals.run --sample 5 # quick pass
+cd backend; .\.venv\Scripts\python -m evals.run --no-llm   # deterministic part (CI runs it, --strict)
+```
+
+Caveats, also in the report: during the latest run the smart Gemini models were out of free-tier quota, so every answer came from the Flash-Lite fallbacks; cases hit by Gemini outages were re-run once and merged; the one miss the first run found (an exhibitor's own-discount question answered with its booth) was fixed and the affected suites re-run in full. Correctness is checked with value and string matching against database facts, not an LLM judge.
+
 ## How isolation works
 
 - Three database roles: the **owner** (migrations and seeding only), **app_rw** (what the API uses; not the owner, so every RLS policy applies), and **app_readonly** (NL-to-SQL; can only `SELECT` from approved reporting views).

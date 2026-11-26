@@ -48,6 +48,9 @@ jobs:
       - run: python -m app.seed
       # unit + RLS isolation tests; no LLM calls
       - run: pytest -q
+      # deterministic evals (workflows, matching, SQL guard + database, access control, consent);
+      # any leak or failing case fails the build
+      - run: python -m evals.run --no-llm --strict --out evals/reports/ci.md
 
   frontend:
     runs-on: ubuntu-latest

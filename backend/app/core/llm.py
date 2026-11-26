@@ -5,9 +5,10 @@
 * Reliability: every call has a hard timeout. Timeouts, 429 and 5xx are retried with
   exponential backoff + jitter, then the next model in the chain is tried. Other 4xx errors
   (bad request, auth) fail immediately because retrying cannot help.
-* Cooldown: a model that exhausts its attempts on overload (429/503/504/timeout) is skipped
-  for `llm_busy_cooldown_s`, so later calls go straight to the fallback instead of paying the
-  same retries again. If every model is cooling down, the full chain is tried.
+* Cooldown: a model that exhausts its attempts on overload (503/504/timeout), or answers 429
+  (quota; not retried), is skipped for `llm_busy_cooldown_s`, so later calls go straight to the
+  fallback instead of paying the same retries again. Cooling models are still tried once, last,
+  if every ready model fails.
 * Structured output: pass a Pydantic model as `schema`; the response is validated against it
   and an invalid response counts as a retryable failure.
 * Telemetry: one llm_usage_logs row per gateway call (model actually used, tokens, latency).
@@ -89,10 +90,19 @@ class LLMGateway:
         self._clock = clock
         self._busy_until: dict[str, float] = {}  # model -> monotonic time it may be tried again
 
-    def _available(self, chain: list[str]) -> list[str]:
+    def _plan(self, chain: list[str]) -> list[tuple[str, int]]:
+        """(model, attempts): ready models first with full retries, then models still cooling
+        down with a single last-resort attempt (they may have recovered)."""
         now = self._clock()
+        n = self.settings.llm_attempts_per_model
         ready = [m for m in chain if self._busy_until.get(m, 0.0) <= now]
-        return ready or chain
+        return [(m, n) for m in ready] + [(m, 1) for m in chain if m not in ready]
+
+    def _cool(self, model: str) -> None:
+        seconds = self.settings.llm_busy_cooldown_s
+        if seconds > 0:
+            self._busy_until[model] = self._clock() + seconds
+            log.warning("llm_model_cooldown", model=model, seconds=seconds)
 
     @property
     def client(self) -> Any:
@@ -175,9 +185,9 @@ class LLMGateway:
         attempts = 0
         failures: list[str] = []
 
-        for model in self._available(chain):
+        for model, tries in self._plan(chain):
             reasons: list[str] = []
-            for i in range(s.llm_attempts_per_model):
+            for i in range(tries):
                 attempts += 1
                 try:
                     resp, text, parsed = await self._attempt(model, contents, config, schema)
@@ -185,14 +195,14 @@ class LLMGateway:
                     failures.append(f"{model}:{exc.reason}")
                     reasons.append(exc.reason)
                     log.warning("llm_retry", model=model, reason=exc.reason, attempt=attempts)
-                    if i + 1 < s.llm_attempts_per_model:
+                    if exc.reason == "http_429":  # quota/rate limit: retrying now won't help
+                        self._cool(model)
+                        break
+                    if i + 1 < tries:
                         delay = s.llm_backoff_base_s * 2**i
                         await self._sleep(delay + random.uniform(0, delay / 2))
-                    elif all(r in OVERLOAD for r in reasons) and s.llm_busy_cooldown_s > 0:
-                        self._busy_until[model] = self._clock() + s.llm_busy_cooldown_s
-                        log.warning(
-                            "llm_model_cooldown", model=model, seconds=s.llm_busy_cooldown_s
-                        )
+                    elif all(r in OVERLOAD for r in reasons):
+                        self._cool(model)
                     continue
                 except LLMError as exc:
                     await self._record(ctx, route_type, model, t0, status="error", error=str(exc))

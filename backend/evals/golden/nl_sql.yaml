@@ -1,0 +1,128 @@
+# BI copilot: execution accuracy. Target: >= 80%.
+#
+# Each question goes through POST /analytics/nl-sql as Ali (organizer, HealthTech Summit). The
+# reference SQL runs through the same guard and read-only role, so both see identical data.
+# A case passes when every reference column has a column in the answer with the same values
+# (numbers within 1%, case-insensitive text; column names and extra columns don't matter):
+#   match: rows    - the same multiset of values (default)
+#   match: ordered - the same values in the same order (rankings, "top N")
+#   match: first   - only the first row has to agree (questions asking for "the" top item,
+#                    where a longer answer list is fine)
+
+defaults:
+  as: ali
+  event: HealthTech
+
+cases:
+  # --- sessions ---------------------------------------------------------------------------
+  - id: count-sessions
+    q: How many sessions are there in total?
+    ref: SELECT count(*) AS n FROM session_attendance_v
+  - id: count-workshops
+    q: How many workshops are on the program?
+    ref: SELECT count(*) AS n FROM session_attendance_v WHERE session_kind = 'workshop'
+  - id: sessions-per-kind
+    q: How many sessions of each kind (keynote, talk, panel, workshop) are there?
+    ref: SELECT session_kind, count(*) AS n FROM session_attendance_v GROUP BY session_kind
+  - id: most-bookmarked
+    q: Which session has the most bookmarks?
+    ref: >
+      SELECT title FROM session_attendance_v ORDER BY bookmarks DESC, title LIMIT 1
+    match: first
+  - id: top5-bookmarked
+    q: List the top 5 sessions by number of bookmarks.
+    ref: >
+      SELECT title, bookmarks FROM session_attendance_v ORDER BY bookmarks DESC, title LIMIT 5
+    match: ordered
+  - id: overbooked
+    q: Which sessions are bookmarked beyond their room capacity?
+    ref: SELECT title FROM session_attendance_v WHERE bookmarks > capacity
+  - id: highest-dropoff
+    q: Which session had the highest drop-off after 20 minutes?
+    ref: >
+      SELECT title FROM session_attendance_v WHERE dropoff_after_20min_pct IS NOT NULL
+      ORDER BY dropoff_after_20min_pct DESC LIMIT 1
+    match: first
+  - id: keynote-checkins
+    q: How many people checked in to the opening keynote?
+    ref: SELECT checkins FROM session_attendance_v WHERE session_kind = 'keynote'
+  - id: track-most-sessions
+    q: Which track has the most sessions?
+    ref: >
+      SELECT track, count(*) AS n FROM session_attendance_v WHERE track IS NOT NULL
+      GROUP BY track ORDER BY n DESC, track LIMIT 1
+    match: first
+  - id: checkins-per-track
+    q: What is the total number of check-ins per track?
+    ref: >
+      SELECT track, sum(checkins) AS checkins FROM session_attendance_v
+      WHERE track IS NOT NULL GROUP BY track
+  - id: workshop-rooms
+    q: Which rooms host workshops?
+    ref: SELECT DISTINCT room FROM session_attendance_v WHERE session_kind = 'workshop'
+
+  # --- exhibitors and leads ---------------------------------------------------------------
+  - id: most-booth-visits
+    q: Which exhibitor had the most booth visits?
+    ref: >
+      SELECT exhibitor_name FROM exhibitor_performance_v ORDER BY booth_visits DESC LIMIT 1
+    match: first
+  - id: top3-leads
+    q: Who are the top 3 exhibitors by number of leads?
+    ref: >
+      SELECT exhibitor_name, leads FROM exhibitor_performance_v
+      ORDER BY leads DESC, exhibitor_name LIMIT 3
+    match: ordered
+  - id: qualified-yesterday
+    q: Which exhibitor generated the most qualified leads yesterday?
+    ref: >
+      SELECT exhibitor_name, sum(qualified_leads) AS q FROM lead_summary_v
+      WHERE lead_date = current_date - 1 GROUP BY exhibitor_name ORDER BY q DESC LIMIT 1
+    match: first
+  - id: medscan-total-leads
+    q: How many leads did MedScan capture in total?
+    ref: SELECT sum(leads) AS leads FROM lead_summary_v WHERE exhibitor_name = 'MedScan'
+  - id: leads-per-day
+    q: How many leads were captured on each day of the event?
+    ref: >
+      SELECT lead_date, sum(leads) AS leads FROM lead_summary_v GROUP BY lead_date
+  - id: best-conversion
+    q: Which exhibitor has the highest visitor-to-lead conversion rate?
+    ref: >
+      SELECT exhibitor_name FROM exhibitor_performance_v WHERE visitor_to_lead_pct IS NOT NULL
+      ORDER BY visitor_to_lead_pct DESC LIMIT 1
+    match: first
+  - id: total-meeting-requests
+    q: How many meeting requests did exhibitors receive in total?
+    ref: SELECT sum(meeting_requests) AS n FROM exhibitor_performance_v
+  - id: medscan-booth
+    q: Which booth is MedScan at?
+    ref: SELECT booth FROM exhibitor_performance_v WHERE exhibitor_name = 'MedScan'
+  - id: exhibitors-per-category
+    q: How many exhibitors are there in each category?
+    ref: >
+      SELECT exhibitor_category, count(*) AS n FROM exhibitor_performance_v
+      GROUP BY exhibitor_category
+
+  # --- engagement, networking, consent ----------------------------------------------------
+  - id: app-opens-yesterday
+    q: How many app opens were there yesterday?
+    ref: >
+      SELECT sum(events) AS n FROM engagement_v WHERE kind = 'app_open' AND day = current_date - 1
+  - id: busiest-booth-day
+    q: On which day were there the most booth visits?
+    ref: >
+      SELECT day, sum(events) AS visits FROM engagement_v WHERE kind = 'booth_visit'
+      GROUP BY day ORDER BY visits DESC LIMIT 1
+    match: first
+  - id: connections-accepted
+    q: How many peer connection requests were accepted overall?
+    ref: SELECT sum(connections_accepted) AS n FROM networking_v
+  - id: matching-optins
+    q: How many attendees opted in to exhibitor matching?
+    ref: SELECT sum(exhibitor_matching_opt_in) AS n FROM attendee_optin_v
+  - id: biggest-industry
+    q: Which attendee industry has the most attendees?
+    ref: >
+      SELECT industry FROM attendee_optin_v ORDER BY attendees DESC, industry LIMIT 1
+    match: first

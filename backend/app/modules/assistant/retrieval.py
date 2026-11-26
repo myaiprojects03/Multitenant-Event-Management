@@ -97,7 +97,10 @@ async def lookup_sessions(db: AsyncSession, term: str, limit: int = 3) -> list[F
     rows = await db.execute(
         text(
             f"""SELECT s.id, s.title, s.kind, s.starts_at, s.ends_at, r.name AS room, r.floor,
-                       {_MATCH.format(col="s.title")} AS score
+                       {_MATCH.format(col="s.title")} AS score,
+                       (SELECT string_agg(sp.full_name, ', ' ORDER BY sp.full_name)
+                          FROM session_speakers ss JOIN speakers sp ON sp.id = ss.speaker_id
+                         WHERE ss.session_id = s.id) AS speakers
                 FROM sessions s LEFT JOIN rooms r ON r.id = s.room_id
                 WHERE {_MATCH.format(col="s.title")} > 0.45
                 ORDER BY score DESC, s.starts_at LIMIT :l"""
@@ -110,7 +113,8 @@ async def lookup_sessions(db: AsyncSession, term: str, limit: int = 3) -> list[F
             r.id,
             r.title,
             f"{r.title} ({r.kind}) is in {r.room or 'a room to be announced'}"
-            f"{f' ({r.floor})' if r.floor else ''} on {_when(r.starts_at, r.ends_at)}.",
+            f"{f' ({r.floor})' if r.floor else ''} on {_when(r.starts_at, r.ends_at)}"
+            f"{f', with {r.speakers}' if r.speakers else ''}.",
             float(r.score),
         )
         for r in rows
