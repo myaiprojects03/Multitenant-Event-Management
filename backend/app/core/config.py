@@ -78,6 +78,8 @@ class Settings(BaseSettings):
     llm_backoff_base_s: float = 1.0
     # a model that keeps answering 429/503/504 is skipped for this long (0 = off)
     llm_busy_cooldown_s: float = 120.0
+    # ...and one that answers 429 (free-tier quota spent) for this long
+    llm_quota_cooldown_s: float = 900.0
     # optional, for cost telemetry; free tier = 0
     llm_price_in_per_mtok: float = 0.0
     llm_price_out_per_mtok: float = 0.0

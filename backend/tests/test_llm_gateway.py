@@ -180,3 +180,29 @@ async def test_free_text_without_schema():
 def test_model_chain_dedupes_and_orders():
     s = Settings(gemini_model_smart="a", gemini_smart_fallbacks=" b, a ,c,")
     assert s.model_chain("smart") == ["a", "b", "c"]
+
+
+class FakeRedis:
+    def __init__(self):
+        self.ttls: dict[str, int] = {}
+
+    async def set(self, key, value, ex=None):
+        self.ttls[key] = ex
+
+    async def ttl(self, key):
+        return self.ttls.get(key, -2)
+
+
+async def test_serverless_shares_quota_cooldown_across_instances(monkeypatch):
+    """A 429 seen by one Vercel instance makes the next instance skip that model at once."""
+    from app.core import redis as redis_module
+
+    shared = FakeRedis()
+    monkeypatch.setattr(redis_module, "get_redis", lambda: shared)
+    first, _, _ = gateway([server_error(429), ok()], serverless=True)
+    await call(first)
+    assert shared.ttls == {"llm:cooling:primary": 900}  # quota: long cooldown, not 120 s
+
+    second, models, _ = gateway([ok()], serverless=True)  # a fresh instance
+    await call(second)
+    assert models.calls == ["backup"]

@@ -91,6 +91,7 @@ class LLMGateway:
         self._sleep = sleep
         self._clock = clock
         self._busy_until: dict[str, float] = {}  # model -> monotonic time it may be tried again
+        self._shared_cooling: list[tuple[str, float]] = []  # cooldowns not yet saved to Redis
 
     def _plan(self, chain: list[str]) -> list[tuple[str, int]]:
         """(model, attempts): ready models first with full retries, then models still cooling
@@ -100,11 +101,46 @@ class LLMGateway:
         ready = [m for m in chain if self._busy_until.get(m, 0.0) <= now]
         return [(m, n) for m in ready] + [(m, 1) for m in chain if m not in ready]
 
-    def _cool(self, model: str) -> None:
+    def _cool(self, model: str, reason: str = "") -> None:
         seconds = self.settings.llm_busy_cooldown_s
+        if reason == "http_429":  # a spent (daily) quota won't come back in two minutes
+            seconds = max(seconds, self.settings.llm_quota_cooldown_s)
         if seconds > 0:
             self._busy_until[model] = self._clock() + seconds
+            self._shared_cooling.append((model, seconds))
             log.warning("llm_model_cooldown", model=model, seconds=seconds)
+
+    # Serverless: each instance would otherwise learn about a busy model the slow way (a 30 s
+    # timeout or a 429 per instance), so cooldowns are also kept in Redis with a TTL.
+    _SHARED = "llm:cooling:"
+
+    async def _load_shared(self, chain: list[str]) -> None:
+        if not self.settings.serverless:
+            return
+        try:
+            from app.core.redis import get_redis
+
+            redis = get_redis()
+            for model in chain:
+                ttl = await redis.ttl(self._SHARED + model)
+                if ttl and ttl > 0:
+                    until = self._clock() + ttl
+                    self._busy_until[model] = max(self._busy_until.get(model, 0.0), until)
+        except Exception:  # Redis trouble must never block an LLM call
+            log.warning("llm_shared_cooldown_unavailable")
+
+    async def _save_shared(self) -> None:
+        pending, self._shared_cooling = self._shared_cooling, []
+        if not (pending and self.settings.serverless):
+            return
+        try:
+            from app.core.redis import get_redis
+
+            redis = get_redis()
+            for model, seconds in pending:
+                await redis.set(self._SHARED + model, "1", ex=max(int(seconds), 1))
+        except Exception:
+            log.warning("llm_shared_cooldown_unavailable")
 
     @property
     def client(self) -> Any:
@@ -193,9 +229,18 @@ class LLMGateway:
         config = self._config(schema, system, temperature, thinking_level, max_output_tokens)
         chain = s.model_chain(tier)
         t0 = time.perf_counter()
-        attempts = 0
         failures: list[str] = []
+        await self._load_shared(chain)
+        try:
+            return await self._generate(
+                contents, chain, config, schema, ctx, route_type, t0, failures
+            )
+        finally:
+            await self._save_shared()
 
+    async def _generate(self, contents, chain, config, schema, ctx, route_type, t0, failures):
+        s = self.settings
+        attempts = 0
         for model, tries in self._plan(chain):
             reasons: list[str] = []
             for i in range(tries):
@@ -207,7 +252,7 @@ class LLMGateway:
                     reasons.append(exc.reason)
                     log.warning("llm_retry", model=model, reason=exc.reason, attempt=attempts)
                     if exc.reason == "http_429":  # quota/rate limit: retrying now won't help
-                        self._cool(model)
+                        self._cool(model, "http_429")
                         break
                     if i + 1 < tries:
                         delay = s.llm_backoff_base_s * 2**i
