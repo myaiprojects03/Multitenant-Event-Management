@@ -16,20 +16,56 @@ VARIABLES = {
     "SWEEP_INTERVAL_MIN": "30",  # lets the Neon database scale to zero between visits
 }
 
-folder, space, sha = sys.argv[1], os.environ["HF_SPACE"], os.environ.get("GITHUB_SHA", "")[:7]
+
+def step(name, fn, *args, **kw):
+    """Run one Hub call; on failure say which step and why (never the token) and stop."""
+    try:
+        return fn(*args, **kw)
+    except Exception as e:  # noqa: BLE001
+        detail = getattr(getattr(e, "response", None), "text", "") or str(e)
+        print(f"::error::{name} failed: {type(e).__name__}: {detail[:500]}")
+        sys.exit(1)
+
+
+folder, sha = sys.argv[1], os.environ.get("GITHUB_SHA", "")[:7]
+space = os.environ.get("HF_SPACE", "").strip()
+if not os.environ.get("HF_TOKEN"):
+    sys.exit("::error::Repo secret HF_TOKEN is empty")
+if space.count("/") != 1:
+    sys.exit(
+        f"::error::Repo variable HF_SPACE must look like <hf-user>/eventai-api, got {space!r}"
+    )
 api = HfApi(token=os.environ["HF_TOKEN"])
-api.create_repo(space, repo_type="space", space_sdk="docker", exist_ok=True)
+user = step("Checking the token (whoami)", api.whoami)
+print(f"Token belongs to {user.get('name')}; target Space {space}")
+step(
+    "Creating the Space (needs a token with write access)",
+    api.create_repo,
+    space,
+    repo_type="space",
+    space_sdk="docker",
+    exist_ok=True,
+)
 
-current = {k: v.value for k, v in api.get_space_variables(space).items()}
+current = {
+    k: v.value
+    for k, v in step("Reading Space variables", api.get_space_variables, space).items()
+}
 for key, value in VARIABLES.items():
-    if current.get(key) != value:  # each change restarts the Space, so only set what differs
-        api.add_space_variable(space, key, value)
+    if (
+        current.get(key) != value
+    ):  # each change restarts the Space, so only set what differs
+        step(f"Setting variable {key}", api.add_space_variable, space, key, value)
 
-api.upload_folder(
+step(
+    "Uploading the backend",
+    api.upload_folder,
     repo_id=space,
     repo_type="space",
     folder_path=folder,
-    delete_patterns=["*"],  # mirror: files removed from the repo disappear from the Space too
+    delete_patterns=[
+        "*"
+    ],  # mirror: files removed from the repo disappear from the Space too
     commit_message=f"Deploy {sha}",
 )
 print(f"Deployed {sha} to https://huggingface.co/spaces/{space}")
