@@ -9,7 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Single-container hosts (Hugging Face Spaces) have no managed Redis: start.sh runs this one
+# Single-service hosting (Render free) has no Redis of its own: start.sh runs this one
 # when REDIS_URL is not set.
 RUN apt-get update && apt-get install -y --no-install-recommends redis-server     && rm -rf /var/lib/apt/lists/*
 
