@@ -6,6 +6,7 @@ passages; fastembed's query_embed / passage_embed apply them.
 """
 
 import asyncio
+import os
 import threading
 from functools import lru_cache
 
@@ -31,6 +32,10 @@ class EmbeddingService:
     def _load(self):
         with self._lock:
             if self._model is None:
+                if get_settings().serverless:
+                    # the Hugging Face downloader keeps a cache under $HOME, which is read-only
+                    # on Vercel: without this the model never loads ("Read-only file system")
+                    os.environ.setdefault("HF_HOME", "/tmp/hf")
                 from fastembed import TextEmbedding  # heavy import, only when needed
 
                 self._model = TextEmbedding(model_name=self.model_name, cache_dir=self.cache_dir)
