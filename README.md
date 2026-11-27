@@ -144,19 +144,20 @@ Caveats, also in the report: during the latest run the smart Gemini models were 
 - Reporting views filter on the same context and are organizer-only. Exhibitors get a separate anonymized prospects view: no names, companies or contact details, and only attendees who opted in to exhibitor matching.
 - Tests in [backend/tests/test_isolation.py](backend/tests/test_isolation.py) run raw SQL as `app_rw` for several personas and assert zero cross-tenant, cross-event and cross-exhibitor rows on every table.
 
-## Deployment (free tier)
+## Deployment (free tier, no card)
 
-The console runs on Vercel and the backend on Render, both on free plans. [render.yaml](render.yaml) is a Render Blueprint for the API, Postgres (pgvector) and Key Value (Redis).
+The API runs on a Hugging Face Space (Docker), the database on Neon (Postgres + pgvector) and the console on Vercel. None of the three asks for a card.
 
-- **API:** a Docker web service. It runs migrations on boot, runs the job worker in-process (free plans have no separate worker service), and has the embedding model baked into the image. It sleeps after 15 minutes idle; the first request then takes about a minute.
-- **Demo data:** the seed is dated relative to the day it runs, so [.github/workflows/reseed-demo.yml](.github/workflows/reseed-demo.yml) reseeds and re-indexes the database nightly, and on demand. It runs on GitHub Actions because embedding about 1,300 cards on Render's 0.1 CPU takes far too long. To make that possible, the database accepts external TLS connections, protected by its generated password.
-- **Console:** Vercel project with root directory `frontend` and `API_URL` set to the Render API URL. Browser calls go to `/api/*` on the console, which proxies them to the API (no CORS).
-- **Free database:** Render's free Postgres expires after 30 days unless upgraded.
+- **API:** [.github/workflows/deploy-space.yml](.github/workflows/deploy-space.yml) pushes `backend/` to the Space after CI passes on `main` ([deploy/hf-space](deploy/hf-space)). The container runs migrations on boot, its own Redis (queue and cache only), the job worker in-process, and has the embedding model baked in. The free Space sleeps after 48 hours without visitors; waking it takes about a minute.
+- **Demo data:** the seed is dated relative to the day it runs, so the API reseeds itself on boot and nightly when the data is older than today (`DEMO_AUTO_SEED`, about 2.5 minutes on the Space's 2 CPUs). The workflow sweep runs every 30 minutes so Neon can scale to zero between visits.
+- **Secrets:** the Space needs three: `GEMINI_API_KEY`, `DATABASE_OWNER_URL` (Neon's owner connection string; the direct endpoint is used even if the pooled one is pasted) and `APP_SECRET`, from which the app role passwords and the JWT and webhook secrets are derived. The role passwords are re-applied on every boot.
+- **Console:** Vercel project with root directory `frontend` and `API_URL` set to the Space URL. Browser calls go to `/api/*` on the console, which proxies them to the API (no CORS).
 
 Steps:
-1. Render: **New > Blueprint**, pick this repo, enter `GEMINI_API_KEY` when asked.
-2. GitHub repo secrets: `RENDER_DATABASE_URL` (eventai-db > External Database URL) and `RENDER_APP_RW_PASSWORD` (eventai-api > Environment > `APP_RW_PASSWORD`). Then run **Actions > Reseed demo**.
-3. Vercel: import the repo, set the root directory to `frontend` and `API_URL=https://<your-api>.onrender.com`, then deploy.
+1. Neon: create a project (Postgres 16, AWS US East) and copy its connection string.
+2. Hugging Face: create an access token with write access. On GitHub, add it as the repo secret `HF_TOKEN` and add the repo variable `HF_SPACE=<hf-user>/eventai-api`, then run **Actions > Deploy API** (it creates the Space).
+3. In the Space's **Settings > Variables and secrets**, add the three secrets above. Generate `APP_SECRET` with `python -c "import secrets; print(secrets.token_hex(32))"`.
+4. Vercel: import the repo, set the root directory to `frontend` and `API_URL=https://<hf-user>-eventai-api.hf.space`, then deploy.
 
 ## Demo personas
 

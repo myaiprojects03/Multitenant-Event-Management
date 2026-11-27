@@ -141,9 +141,16 @@ class WorkerSettings:
         deliver_workflow_job,
         refresh_demo_job,
     ]
-    cron_jobs = [cron(sweep_workflows, second={0, 30}, run_at_startup=True)] + (
-        [cron(refresh_demo_job, hour={0}, minute={5})] if get_settings().demo_auto_seed else []
-    )
+    cron_jobs = [
+        cron(sweep_workflows, second={0, 30}, run_at_startup=True)
+        if not get_settings().sweep_interval_min
+        else cron(
+            sweep_workflows,
+            minute=set(range(0, 60, get_settings().sweep_interval_min)),
+            second=0,
+            run_at_startup=True,
+        )
+    ] + ([cron(refresh_demo_job, hour={0}, minute={5})] if get_settings().demo_auto_seed else [])
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
     max_tries = 5  # arq retries failed jobs (Retry / exceptions) up to this many times

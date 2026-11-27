@@ -1,6 +1,8 @@
+import hashlib
+import hmac
 from functools import lru_cache
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -31,19 +33,28 @@ class Settings(BaseSettings):
     )
     app_rw_password: SecretStr = SecretStr("app_rw_dev")
     app_readonly_password: SecretStr = SecretStr("app_readonly_dev")
-    # Hosted Postgres (Render) hands out host/user/password separately: when DB_HOST is set, the
-    # three URLs above are built from these parts and the app role passwords.
+    # Hosted Postgres: when DB_HOST is set, the three URLs above are built from these parts and
+    # the app role passwords. DATABASE_OWNER_URL (the owner connection string a host such as
+    # Neon shows, postgresql://user:pw@host/db?sslmode=require) fills them in one go.
+    database_owner_url: SecretStr | None = None
     db_host: str | None = None
     db_port: int = 5432
     db_name: str = "eventai"
     db_user: str = "eventai"
     db_password: SecretStr = SecretStr("")
+    db_ssl: bool = False
     redis_url: str = "redis://localhost:6379/0"
 
     # Hosted demo (free tier, no shell or separate worker): run the arq worker inside the API
     # process, and reseed the synthetic demo data when it is missing or dated before today.
     run_worker_in_process: bool = False
     demo_auto_seed: bool = False
+    # how often the workflow safety-net sweep runs: 0 = every 30 s. A scale-to-zero database
+    # (Neon) only sleeps if nothing queries it for 5 minutes, so the hosted demo uses 30.
+    sweep_interval_min: int = 0
+    # One secret to derive the others from (app role passwords, JWT and webhook secrets) when
+    # they are not set explicitly: a host's settings page then needs a single value.
+    app_secret: SecretStr | None = None
 
     jwt_secret: SecretStr = SecretStr("dev-only-secret")
     jwt_ttl_minutes: int = 480
@@ -85,8 +96,32 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _compose_db_urls(self) -> "Settings":
+        if self.database_owner_url:
+            u = urlsplit(self.database_owner_url.get_secret_value())
+            # PgBouncer in transaction mode breaks asyncpg's prepared statements: use the
+            # direct endpoint (Neon names the pooled one "<endpoint>-pooler.<region>...")
+            self.db_host = (u.hostname or "").replace("-pooler.", ".", 1)
+            self.db_port = u.port or 5432
+            self.db_name = u.path.lstrip("/") or self.db_name
+            self.db_user = unquote(u.username or "")
+            self.db_password = SecretStr(unquote(u.password or ""))
+            if parse_qs(u.query).get("sslmode", ["disable"])[0] != "disable":
+                self.db_ssl = True
+        if self.app_secret:
+            key = self.app_secret.get_secret_value().encode()
+            for name in (
+                "app_rw_password",
+                "app_readonly_password",
+                "jwt_secret",
+                "webhook_secret",
+            ):
+                if name not in self.model_fields_set:
+                    derived = hmac.new(key, name.encode(), hashlib.sha256).hexdigest()
+                    setattr(self, name, SecretStr(derived))
         if self.db_host:
             where = f"{self.db_host}:{self.db_port}/{self.db_name}"
+            if self.db_ssl:
+                where += "?ssl=require"
 
             def url(user: str, password: SecretStr) -> str:
                 pw = quote(password.get_secret_value(), safe="")
@@ -95,6 +130,8 @@ class Settings(BaseSettings):
             self.migration_database_url = url(self.db_user, self.db_password)
             self.database_url = url("app_rw", self.app_rw_password)
             self.readonly_database_url = url("app_readonly", self.app_readonly_password)
+        if self.app_env == "production" and self.jwt_secret.get_secret_value() == "dev-only-secret":
+            raise ValueError("APP_ENV=production needs JWT_SECRET or APP_SECRET")
         return self
 
     def model_chain(self, tier: str) -> list[str]:
