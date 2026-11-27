@@ -146,6 +146,8 @@ Caveats, also in the report: during the latest run the smart Gemini models were 
 
 ## Deployment (free tier, no card)
 
+Live demo: console at https://multitenant-event-management-cbhr.vercel.app, API at https://multitenant-event-management.vercel.app (`/health`, `/docs`). Pick a demo persona; the data is synthetic and reseeded nightly.
+
 Everything runs on free plans that don't ask for a card: the API and the console are two Vercel projects, the database is Neon (Postgres + pgvector) and Redis is Upstash (added from Vercel's Storage tab).
 
 - **API:** Vercel runs FastAPI from `backend/app/main.py` as one function ([backend/vercel.json](backend/vercel.json)). On Vercel (`VERCEL` is set) the app switches to serverless mode: queued jobs (workflow runs, deliveries with their retry backoff, re-indexing) run inline in the request that queued them, after the response is sent; the workflow safety-net sweep runs after a request at most every 30 minutes; and database, Redis and Gemini clients are rebuilt if the runtime hands a request a new event loop. The embedding model downloads to `/tmp` on a cold start.
