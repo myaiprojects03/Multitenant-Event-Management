@@ -8,6 +8,13 @@ from app.core.config import Settings
 NEON = "postgresql://neondb_owner:p%40ss@ep-x-123-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
 
+@pytest.fixture(autouse=True)
+def _clean_env(monkeypatch):
+    """CI exports JWT_SECRET, DATABASE_URL...: explicit values would win over derived ones."""
+    for name in Settings.model_fields:
+        monkeypatch.delenv(name.upper(), raising=False)
+
+
 def make(**kw) -> Settings:
     return Settings(_env_file=None, **kw)
 
