@@ -46,3 +46,24 @@ def test_production_refuses_the_dev_jwt_secret():
     with pytest.raises(ValidationError):
         make(app_env="production", jwt_secret=SecretStr("dev-only-secret"))
     assert make(app_env="production", app_secret=SecretStr("s3cret")).app_env == "production"
+
+
+def test_pyproject_lists_the_same_dependencies_as_requirements():
+    import tomllib
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    reqs = [
+        line.strip()
+        for line in (root / "requirements.txt").read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    deps = tomllib.loads((root / "pyproject.toml").read_text())["project"]["dependencies"]
+    assert deps == reqs
+
+
+def test_vercel_turns_on_serverless_mode(monkeypatch):
+    monkeypatch.setenv("VERCEL", "1")
+    s = make()
+    assert s.serverless and s.embedding_cache_dir == "/tmp/fastembed"
+    assert make(serverless=False).serverless is False

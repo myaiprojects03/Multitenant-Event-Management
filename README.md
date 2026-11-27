@@ -144,20 +144,21 @@ Caveats, also in the report: during the latest run the smart Gemini models were 
 - Reporting views filter on the same context and are organizer-only. Exhibitors get a separate anonymized prospects view: no names, companies or contact details, and only attendees who opted in to exhibitor matching.
 - Tests in [backend/tests/test_isolation.py](backend/tests/test_isolation.py) run raw SQL as `app_rw` for several personas and assert zero cross-tenant, cross-event and cross-exhibitor rows on every table.
 
-## Deployment (free tier)
+## Deployment (free tier, no card)
 
-The API runs as a single Render web service (Docker), the database on Neon (Postgres + pgvector) and the console on Vercel, all on free plans.
+Everything runs on free plans that don't ask for a card: the API and the console are two Vercel projects, the database is Neon (Postgres + pgvector) and Redis is Upstash (added from Vercel's Storage tab).
 
-- **API:** one Render web service built from [backend/Dockerfile](backend/Dockerfile). The container runs migrations on boot, its own Redis (queue, cache and rate limits only; losing it on a restart is fine), the job worker in-process, and has the embedding model baked in. It sleeps after 15 minutes idle; the first request then takes about a minute.
-- **Demo data:** the seed is dated relative to the day it runs, so [.github/workflows/reseed-demo.yml](.github/workflows/reseed-demo.yml) migrates, reseeds and re-indexes the Neon database nightly, and on demand. It runs on GitHub Actions because embedding about 1,300 cards on Render's 0.1 CPU takes far too long.
-- **Secrets:** `GEMINI_API_KEY`, `DATABASE_OWNER_URL` (Neon's owner connection string; the direct endpoint is used even if the pooled one is pasted) and `APP_SECRET`, from which the app role passwords and the JWT and webhook secrets are derived. The role passwords are re-applied on every boot.
-- **Console:** Vercel project with root directory `frontend` and `API_URL` set to the Render URL. Browser calls go to `/api/*` on the console, which proxies them to the API (no CORS).
+- **API:** Vercel runs FastAPI from `backend/app/main.py` as one function ([backend/vercel.json](backend/vercel.json)). On Vercel (`VERCEL` is set) the app switches to serverless mode: queued jobs (workflow runs, deliveries with their retry backoff, re-indexing) run inline in the request that queued them, after the response is sent; the workflow safety-net sweep runs after a request at most every 30 minutes; and database, Redis and Gemini clients are rebuilt if the runtime hands a request a new event loop. The embedding model downloads to `/tmp` on a cold start.
+- **Demo data:** the seed is dated relative to the day it runs, so [.github/workflows/reseed-demo.yml](.github/workflows/reseed-demo.yml) migrates, reseeds and re-indexes the Neon database nightly, and on demand.
+- **Secrets:** `GEMINI_API_KEY`, `DATABASE_OWNER_URL` (Neon's owner connection string; the direct endpoint is used even if the pooled one is pasted) and `APP_SECRET`, from which the app role passwords and the JWT and webhook secrets are derived.
+- **Console:** Vercel project with root directory `frontend` and `API_URL` set to the API project's URL. Browser calls go to `/api/*` on the console, which proxies them to the API (no CORS).
+- The Docker image ([backend/Dockerfile](backend/Dockerfile)) still runs the same API as a long-lived server with its own Redis and worker, for hosts that run containers.
 
 Steps:
 1. Neon: create a project (Postgres 16, AWS US East) and copy its connection string. Generate `APP_SECRET` with `python -c "import secrets; print(secrets.token_hex(32))"`.
 2. GitHub repo secrets `DATABASE_OWNER_URL` and `APP_SECRET`, then run **Actions > Reseed demo** (it also creates the schema).
-3. Render: **New > Web Service**, connect this repo, language Docker, root directory `backend`, instance type Free, health check path `/health`. Environment: `APP_ENV=production`, `RUN_WORKER_IN_PROCESS=true`, `SWEEP_INTERVAL_MIN=30`, plus the three secrets above.
-4. Vercel: import the repo, set the root directory to `frontend` and `API_URL=https://<service>.onrender.com`, then deploy.
+3. Vercel, API: **Add New > Project**, import this repo, root directory `backend` (framework FastAPI is detected). Environment variables: `APP_ENV=production`, `DATABASE_OWNER_URL`, `APP_SECRET`, `GEMINI_API_KEY`. Deploy, then in the project's **Storage** tab add **Upstash for Redis** (free) connected to it, and redeploy.
+4. Vercel, console: import the repo again, root directory `frontend`, `API_URL=https://<api-project>.vercel.app`, deploy.
 
 ## Demo personas
 

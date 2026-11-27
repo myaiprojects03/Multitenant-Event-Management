@@ -9,22 +9,37 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.core.config import get_settings
+from app.core.loops import current_loop
 
 # Request code connects as app_rw (RLS applies). The owner URL is used only by migrations/seed.
 _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
+_engine_loop = None
+
+
+def _pool_args() -> dict:
+    # serverless: many small instances share the database's connection limit
+    return {"pool_size": 2, "max_overflow": 3} if get_settings().serverless else {}
+
+
+def _stale(loop) -> bool:
+    """Serverless: a pool built on a finished event loop can't be reused."""
+    return get_settings().serverless and loop is not current_loop()
 
 
 def get_engine() -> AsyncEngine:
-    global _engine, _sessionmaker
-    if _engine is None:
-        _engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
+    global _engine, _sessionmaker, _engine_loop
+    if _engine is None or _stale(_engine_loop):
+        _engine = create_async_engine(
+            get_settings().database_url, pool_pre_ping=True, **_pool_args()
+        )
         _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
+        _engine_loop = current_loop()
     return _engine
 
 
 def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
-    get_engine()
+    get_engine()  # (re)builds the engine and its sessionmaker together
     assert _sessionmaker is not None
     return _sessionmaker
 
@@ -36,15 +51,19 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 
 
 _readonly_engine: AsyncEngine | None = None
+_readonly_loop = None
 
 
 def get_readonly_engine() -> AsyncEngine:
     """app_readonly: SELECT on approved reporting views only. Used by the BI copilot."""
-    global _readonly_engine
-    if _readonly_engine is None:
+    global _readonly_engine, _readonly_loop
+    if _readonly_engine is None or _stale(_readonly_loop):
         _readonly_engine = create_async_engine(
-            get_settings().readonly_database_url, pool_pre_ping=True, pool_size=3
+            get_settings().readonly_database_url,
+            pool_pre_ping=True,
+            **(_pool_args() or {"pool_size": 3}),
         )
+        _readonly_loop = current_loop()
     return _readonly_engine
 
 

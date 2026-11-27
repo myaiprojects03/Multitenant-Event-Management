@@ -1,10 +1,11 @@
 import hashlib
 import hmac
+import os
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from pydantic import SecretStr, model_validator
+from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -43,11 +44,18 @@ class Settings(BaseSettings):
     db_user: str = "eventai"
     db_password: SecretStr = SecretStr("")
     db_ssl: bool = False
-    redis_url: str = "redis://localhost:6379/0"
+    # KV_URL: the name Vercel's Upstash integration gives it
+    redis_url: str = Field(
+        "redis://localhost:6379/0", validation_alias=AliasChoices("REDIS_URL", "KV_URL")
+    )
 
     # Hosted demo (free tier, no shell or separate worker): run the arq worker inside the API
     # process, and reseed the synthetic demo data when it is missing or dated before today.
     run_worker_in_process: bool = False
+    # Serverless runtime (on by default when Vercel's VERCEL env var is set): no worker process,
+    # so queued jobs run inline in the request that queued them, the workflow sweep runs now
+    # and then after a request, and network clients are rebuilt if the event loop changes.
+    serverless: bool = False
     demo_auto_seed: bool = False
     # how often the workflow safety-net sweep runs: 0 = every 30 s. A scale-to-zero database
     # (Neon) only sleeps if nothing queries it for 5 minutes, so the hosted demo uses 30.
@@ -130,6 +138,10 @@ class Settings(BaseSettings):
             self.migration_database_url = url(self.db_user, self.db_password)
             self.database_url = url("app_rw", self.app_rw_password)
             self.readonly_database_url = url("app_readonly", self.app_readonly_password)
+        if "serverless" not in self.model_fields_set and os.environ.get("VERCEL"):
+            self.serverless = True
+        if self.serverless and "embedding_cache_dir" not in self.model_fields_set:
+            self.embedding_cache_dir = "/tmp/fastembed"  # the only writable path on Vercel
         if self.app_env == "production" and self.jwt_secret.get_secret_value() == "dev-only-secret":
             raise ValueError("APP_ENV=production needs JWT_SECRET or APP_SECRET")
         return self

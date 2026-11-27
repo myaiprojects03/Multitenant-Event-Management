@@ -3,8 +3,9 @@
 import type { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
-// a sleeping free-tier API takes up to a minute to wake, and BI/agent calls can be slow
-export const maxDuration = 120;
+// the API is a Vercel function too: a cold start loads the embedding model, and BI/agent calls
+// (which run their jobs inline) can be slow. 300 s is the Hobby maximum.
+export const maxDuration = 300;
 
 const API_URL = process.env.API_URL ?? "http://localhost:8000";
 const PASS_REQUEST = ["authorization", "content-type", "accept", "x-platform-timestamp", "x-platform-signature"];

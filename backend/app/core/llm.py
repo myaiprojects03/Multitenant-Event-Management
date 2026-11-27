@@ -86,6 +86,8 @@ class LLMGateway:
     ) -> None:
         self.settings = settings or get_settings()
         self._client = client
+        self._client_loop = None  # serverless: the loop our own client was built on
+        self._owns_client = client is None
         self._sleep = sleep
         self._clock = clock
         self._busy_until: dict[str, float] = {}  # model -> monotonic time it may be tried again
@@ -106,6 +108,14 @@ class LLMGateway:
 
     @property
     def client(self) -> Any:
+        from app.core.loops import current_loop
+
+        if (
+            self._owns_client
+            and self.settings.serverless
+            and self._client_loop is not current_loop()
+        ):
+            self._client = None  # its HTTP connections belong to a finished event loop
         if self._client is None:
             key = self.settings.gemini_api_key.get_secret_value()
             if not key:
@@ -115,6 +125,7 @@ class LLMGateway:
                 # SDK-level timeout as a second line of defence behind asyncio.wait_for
                 http_options=types.HttpOptions(timeout=int(self.settings.llm_timeout_s * 1000)),
             )
+            self._client_loop = current_loop()
         return self._client
 
     def _config(

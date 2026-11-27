@@ -1,7 +1,9 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+import structlog
+from fastapi import FastAPI, Request
+from starlette.background import BackgroundTask
 
 from app.api.analytics import router as analytics_router
 from app.api.assistant import router as assistant_router
@@ -17,7 +19,7 @@ from app.core.config import get_settings
 from app.core.db import assert_rls_applies, dispose_engine
 from app.core.jobs import close_job_pool
 from app.core.logging import configure_logging
-from app.core.redis import close_redis
+from app.core.redis import close_redis, get_redis
 from app.core.telemetry import telemetry_middleware
 
 
@@ -70,6 +72,36 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.middleware("http")(telemetry_middleware)
+
+log = structlog.get_logger("main")
+SWEEP_KEY = "sweep:recent"
+
+
+async def _sweep() -> None:
+    from app.workers.main import sweep_workflows
+
+    try:
+        await sweep_workflows({})
+    except Exception:  # never fail a request over the safety net
+        log.exception("sweep_failed")
+
+
+@app.middleware("http")
+async def sweep_now_and_then(request: Request, call_next):
+    """Serverless has no cron worker: at most once per interval, the first request to finish
+    runs the workflow safety-net sweep after its response is sent."""
+    response = await call_next(request)
+    settings = get_settings()
+    if settings.serverless and response.background is None:
+        interval_s = (settings.sweep_interval_min or 30) * 60
+        try:
+            if await get_redis().set(SWEEP_KEY, "1", nx=True, ex=interval_s):
+                response.background = BackgroundTask(_sweep)
+        except Exception:
+            log.exception("sweep_check_failed")
+    return response
+
+
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(me_router)
