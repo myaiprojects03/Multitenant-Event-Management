@@ -18,6 +18,14 @@ export default function SignIn() {
   const personas = useApi<DemoPersona[]>("/auth/demo-users");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [slow, setSlow] = useState(false);
+
+  // the hosted API sleeps when idle (free tier): say so instead of looking broken
+  useEffect(() => {
+    if (!personas.loading) return;
+    const t = setTimeout(() => setSlow(true), 4000);
+    return () => clearTimeout(t);
+  }, [personas.loading]);
 
   useEffect(() => {
     if (ready && session) router.replace(HOME[session.role]);
@@ -95,6 +103,15 @@ export default function SignIn() {
           The suggested walkthrough is Sara (attendee), then Maya at MedScan (exhibitor), then Ali (organizer).
         </p>
         <ErrorNotice message={error ?? personas.error?.message} />
+        {slow && personas.loading && (
+          <div className="notice" style={{ marginBottom: 16 }}>
+            <Spinner />
+            <span>
+              Waking up the API. The free hosting sleeps when nobody has used it for a while, so the
+              first load can take up to a minute.
+            </span>
+          </div>
+        )}
         {personas.loading && (
           <div className="panel">
             <Loading rows={5} />

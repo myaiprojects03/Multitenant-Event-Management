@@ -1,7 +1,8 @@
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import quote
 
-from pydantic import SecretStr
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -30,7 +31,19 @@ class Settings(BaseSettings):
     )
     app_rw_password: SecretStr = SecretStr("app_rw_dev")
     app_readonly_password: SecretStr = SecretStr("app_readonly_dev")
+    # Hosted Postgres (Render) hands out host/user/password separately: when DB_HOST is set, the
+    # three URLs above are built from these parts and the app role passwords.
+    db_host: str | None = None
+    db_port: int = 5432
+    db_name: str = "eventai"
+    db_user: str = "eventai"
+    db_password: SecretStr = SecretStr("")
     redis_url: str = "redis://localhost:6379/0"
+
+    # Hosted demo (free tier, no shell or separate worker): run the arq worker inside the API
+    # process, and reseed the synthetic demo data when it is missing or dated before today.
+    run_worker_in_process: bool = False
+    demo_auto_seed: bool = False
 
     jwt_secret: SecretStr = SecretStr("dev-only-secret")
     jwt_ttl_minutes: int = 480
@@ -69,6 +82,20 @@ class Settings(BaseSettings):
     delivery_backoff_base_s: float = 5.0
     # lets a workflow's params ask the simulated sender to fail (demo + tests). Off in prod.
     allow_failure_injection: bool = True
+
+    @model_validator(mode="after")
+    def _compose_db_urls(self) -> "Settings":
+        if self.db_host:
+            where = f"{self.db_host}:{self.db_port}/{self.db_name}"
+
+            def url(user: str, password: SecretStr) -> str:
+                pw = quote(password.get_secret_value(), safe="")
+                return f"postgresql+asyncpg://{quote(user, safe='')}:{pw}@{where}"
+
+            self.migration_database_url = url(self.db_user, self.db_password)
+            self.database_url = url("app_rw", self.app_rw_password)
+            self.readonly_database_url = url("app_readonly", self.app_readonly_password)
+        return self
 
     def model_chain(self, tier: str) -> list[str]:
         primary, fallbacks = (

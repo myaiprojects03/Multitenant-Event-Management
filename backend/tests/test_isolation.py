@@ -55,9 +55,21 @@ async def test_catalog_covers_all_tables(rw_engine):
         None,
         """SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
            WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname <> 'alembic_version'
-             AND NOT (c.relrowsecurity AND c.relforcerowsecurity)""",
+             AND NOT c.relrowsecurity""",
     )
     assert no_rls == 0
+    # RLS binds every role except a table's owner (and superusers): the request roles must be
+    # neither, and must not be able to switch it off
+    owned_or_privileged = await q(
+        rw_engine,
+        None,
+        """SELECT count(*) FROM pg_roles r
+           WHERE r.rolname IN ('app_rw', 'app_readonly')
+             AND (r.rolsuper OR r.rolbypassrls OR r.rolcreaterole OR EXISTS (
+                  SELECT 1 FROM pg_class c WHERE c.relowner = r.oid))""",
+    )
+    assert owned_or_privileged == 0
+    assert await q(rw_engine, None, "SELECT current_user") == "app_rw"
 
 
 async def test_no_context_sees_nothing(rw_engine):
@@ -358,3 +370,20 @@ async def test_readonly_role_cannot_write(ro_engine, ctx_for):
         await q(ro_engine, ali, "DELETE FROM session_attendance_v")
     with pytest.raises(DBAPIError, match="read-only"):
         await q(ro_engine, ali, "CREATE TEMP TABLE x (id int)")
+
+
+@requires_db
+async def test_rls_bypass_guard(rw_engine):
+    """Serving or indexing over a connection that skips RLS (owner/superuser) is refused."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app.core.config import get_settings
+    from app.core.db import RlsBypassError, assert_rls_applies
+
+    await assert_rls_applies(rw_engine)  # app_rw: fine
+    owner = create_async_engine(get_settings().migration_database_url)
+    try:
+        with pytest.raises(RlsBypassError):
+            await assert_rls_applies(owner)
+    finally:
+        await owner.dispose()

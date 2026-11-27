@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import get_settings
 from app.core.context import RequestContext, scoped_session
-from app.core.db import dispose_engine
+from app.core.db import assert_rls_applies, dispose_engine
 from app.core.embeddings import get_embedder
 from app.modules.assistant.indexer import index_event
 from app.modules.matchmaking.vectors import build_profile_vectors
@@ -36,6 +36,7 @@ async def run(event_id: uuid.UUID | None = None) -> None:
             )
         ).all()
     await owner.dispose()
+    await assert_rls_applies()  # each event is scoped by RLS: never index as the owner
     embedder = get_embedder()
     for tenant_id, eid, name in events:
         t0 = time.perf_counter()

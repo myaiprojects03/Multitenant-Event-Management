@@ -195,9 +195,11 @@ def _roles_sql() -> str:
         CREATE ROLE app_readonly;
       END IF;
     END $$;
-    ALTER ROLE app_rw WITH LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD {rw};
-    ALTER ROLE app_readonly WITH LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE
-      PASSWORD {ro};
+    -- new roles start NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE, and only a superuser
+    -- may even mention SUPERUSER/BYPASSRLS here, which a managed-Postgres owner is not
+    -- (tests/test_isolation.py asserts both roles stay unprivileged)
+    ALTER ROLE app_rw WITH LOGIN PASSWORD {rw};
+    ALTER ROLE app_readonly WITH LOGIN PASSWORD {ro};
     ALTER ROLE app_readonly SET default_transaction_read_only = on;
     ALTER ROLE app_readonly SET statement_timeout = '5s';
     ALTER ROLE app_rw SET statement_timeout = '15s';

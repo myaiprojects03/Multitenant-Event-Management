@@ -139,10 +139,24 @@ Caveats, also in the report: during the latest run the smart Gemini models were 
 
 - Three database roles: the **owner** (migrations and seeding only), **app_rw** (what the API uses; not the owner, so every RLS policy applies), and **app_readonly** (NL-to-SQL; can only `SELECT` from approved reporting views).
 - Each request verifies a JWT, builds a `RequestContext` (tenant, event, role, user, exhibitor) and pins it to the DB transaction with `set_config(..., is_local => true)`.
-- Every table has RLS enabled and forced. Policies read the context, so a query with no context returns zero rows.
+- Every table has RLS enabled. Policies read the context, so a query with no context returns zero rows. RLS binds every role except a table's owner, so the request roles are never owners, superusers or `BYPASSRLS` (tested), and the API refuses to start in production, and re-indexing refuses to run, on a connection that would skip RLS.
 - Visibility levels: `public`, `attendee`, `exhibitor_private` (owner exhibitor only), `organizer_only`.
 - Reporting views filter on the same context and are organizer-only. Exhibitors get a separate anonymized prospects view: no names, companies or contact details, and only attendees who opted in to exhibitor matching.
 - Tests in [backend/tests/test_isolation.py](backend/tests/test_isolation.py) run raw SQL as `app_rw` for several personas and assert zero cross-tenant, cross-event and cross-exhibitor rows on every table.
+
+## Deployment (free tier)
+
+The console runs on Vercel and the backend on Render, both on free plans. [render.yaml](render.yaml) is a Render Blueprint for the API, Postgres (pgvector) and Key Value (Redis).
+
+- **API:** a Docker web service. It runs migrations on boot, runs the job worker in-process (free plans have no separate worker service), and has the embedding model baked into the image. It sleeps after 15 minutes idle; the first request then takes about a minute.
+- **Demo data:** the seed is dated relative to the day it runs, so [.github/workflows/reseed-demo.yml](.github/workflows/reseed-demo.yml) reseeds and re-indexes the database nightly, and on demand. It runs on GitHub Actions because embedding about 1,300 cards on Render's 0.1 CPU takes far too long. To make that possible, the database accepts external TLS connections, protected by its generated password.
+- **Console:** Vercel project with root directory `frontend` and `API_URL` set to the Render API URL. Browser calls go to `/api/*` on the console, which proxies them to the API (no CORS).
+- **Free database:** Render's free Postgres expires after 30 days unless upgraded.
+
+Steps:
+1. Render: **New > Blueprint**, pick this repo, enter `GEMINI_API_KEY` when asked.
+2. GitHub repo secrets: `RENDER_DATABASE_URL` (eventai-db > External Database URL) and `RENDER_APP_RW_PASSWORD` (eventai-api > Environment > `APP_RW_PASSWORD`). Then run **Actions > Reseed demo**.
+3. Vercel: import the repo, set the root directory to `frontend` and `API_URL=https://<your-api>.onrender.com`, then deploy.
 
 ## Demo personas
 

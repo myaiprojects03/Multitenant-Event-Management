@@ -119,6 +119,13 @@ async def sweep_workflows(ctx: dict) -> dict:
     return counts
 
 
+async def refresh_demo_job(ctx: dict) -> str:
+    """Daily (DEMO_AUTO_SEED): reseed when the demo data is dated before today."""
+    from app import demo
+
+    return await demo.refresh()
+
+
 async def shutdown(ctx: dict) -> None:
     await dispose_engine()
     await close_redis()
@@ -132,8 +139,11 @@ class WorkerSettings:
         index_event_job,
         run_workflow_job,
         deliver_workflow_job,
+        refresh_demo_job,
     ]
-    cron_jobs = [cron(sweep_workflows, second={0, 30}, run_at_startup=True)]
+    cron_jobs = [cron(sweep_workflows, second={0, 30}, run_at_startup=True)] + (
+        [cron(refresh_demo_job, hour={0}, minute={5})] if get_settings().demo_auto_seed else []
+    )
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
     max_tries = 5  # arq retries failed jobs (Retry / exceptions) up to this many times

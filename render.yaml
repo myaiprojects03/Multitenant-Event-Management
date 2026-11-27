@@ -1,0 +1,71 @@
+# Render Blueprint: API (with the job worker in-process), Postgres + pgvector, Key Value.
+# All free-tier. Free web services sleep after 15 min idle; the free database expires after
+# 30 days unless upgraded. The demo console is deployed separately on Vercel (frontend/).
+#
+# In the Render dashboard: New > Blueprint > pick this repo. It asks for GEMINI_API_KEY once.
+# Then seed it: add the database's External URL as the RENDER_DATABASE_URL repo secret on
+# GitHub and run the "Reseed demo" workflow (it also runs nightly).
+
+services:
+  - type: web
+    name: eventai-api
+    runtime: docker
+    plan: free
+    region: virginia
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: APP_ENV
+        value: production
+      # owner credentials (migrations, seed, SECURITY DEFINER functions); the API itself
+      # connects as app_rw / app_readonly, whose URLs are built from the same host
+      - key: DB_HOST
+        fromDatabase: {name: eventai-db, property: host}
+      - key: DB_PORT
+        fromDatabase: {name: eventai-db, property: port}
+      - key: DB_NAME
+        fromDatabase: {name: eventai-db, property: database}
+      - key: DB_USER
+        fromDatabase: {name: eventai-db, property: user}
+      - key: DB_PASSWORD
+        fromDatabase: {name: eventai-db, property: password}
+      - key: APP_RW_PASSWORD
+        generateValue: true
+      - key: APP_READONLY_PASSWORD
+        generateValue: true
+      - key: REDIS_URL
+        fromService: {type: keyvalue, name: eventai-redis, property: connectionString}
+      - key: JWT_SECRET
+        generateValue: true
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      - key: GEMINI_API_KEY
+        sync: false  # entered once in the dashboard, never stored in the repo
+      # free tier has no separate worker service: the arq worker runs inside the API process.
+      # The demo data is (re)seeded nightly by .github/workflows/reseed-demo.yml, not here:
+      # embedding ~1,300 cards on the free 0.1 CPU takes far too long.
+      - key: RUN_WORKER_IN_PROCESS
+        value: "true"
+
+  - type: keyvalue
+    name: eventai-redis
+    plan: free
+    region: virginia
+    maxmemoryPolicy: noeviction  # it is also the job queue
+    ipAllowList: []  # reachable only from Render services in this workspace
+
+databases:
+  - name: eventai-db
+    plan: free
+    region: virginia
+    databaseName: eventai
+    user: eventai
+    postgresMajorVersion: "16"
+    # The API connects over Render's private network. The nightly reseed runs on GitHub
+    # Actions, whose IPs are not fixed, so external connections are allowed: TLS + the
+    # generated owner password (approved trade-off for the free demo).
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: GitHub Actions reseed (password + TLS)
